@@ -1,0 +1,1 @@
+# INQUIRY -> CONFIRMED -> PAID transitions

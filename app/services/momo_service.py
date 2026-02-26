@@ -1,0 +1,1 @@
+# MoMo adapter (manual + API mode)

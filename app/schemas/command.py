@@ -1,0 +1,1 @@
+# Seller command payload schemas

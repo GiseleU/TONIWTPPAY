@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Poetry
+.cache/pypoetry/
+
+# Env files (secrets)
+.env
+*.env
+
+# VS Code
+.vscode/
+
+# Migrations cache
+alembic/__pycache__/
+alembic/versions/*.pyc
+
+# Logs
+*.log
+
+# OS-specific files
+.DS_Store
+Thumbs.db
