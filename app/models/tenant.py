@@ -2,6 +2,9 @@ from sqlalchemy import Column, String, DateTime
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
+from sqlalchemy import Column, Enum as PgEnum
+from app.core.enums import CoexistenceStatus
+
 
 class Tenant(Base):
     __tablename__ = "tenants"
@@ -9,6 +12,7 @@ class Tenant(Base):
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False, unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    coexistence_status = Column(PgEnum(CoexistenceStatus), nullable=False, default=CoexistenceStatus.PENDING) # Only ACTIVE tenants can send/receive inquiries.
 
     # Relationships
     whatsapp_accounts = relationship("WhatsAppAccount", back_populates="tenant", cascade="all, delete-orphan")
@@ -19,3 +23,5 @@ class Tenant(Base):
     events = relationship("Event", back_populates="tenant", cascade="all, delete-orphan")
     consents = relationship("Consent", back_populates="tenant", cascade="all, delete-orphan")
     opt_outs = relationship("OptOut", back_populates="tenant", cascade="all, delete-orphan")
+    compliance_signals = relationship("ComplianceSignal", back_populates="tenant", cascade="all, delete-orphan")
+    daily_summaries = relationship("DailySummary", back_populates="tenant", cascade="all, delete-orphan")

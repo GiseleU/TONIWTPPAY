@@ -14,3 +14,4 @@ class WhatsAppAccount(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="whatsapp_accounts")
     inquiries = relationship("Inquiry", back_populates="whatsapp_account", cascade="all, delete-orphan")
+    compliance_signals = relationship("ComplianceSignal", back_populates="whatsapp_account", cascade="all, delete-orphan")

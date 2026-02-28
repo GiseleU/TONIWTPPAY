@@ -17,6 +17,8 @@ from app.api.routes import (
     webhooks,
     orders,
     seller_commands,
+    payments,
+    reports,
 )
 
 def create_app() -> FastAPI:
@@ -30,6 +32,8 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     app.include_router(orders.router)
     app.include_router(seller_commands.router)
+    app.include_router(payments.router)
+    app.include_router(reports.router)
 
     return app
 

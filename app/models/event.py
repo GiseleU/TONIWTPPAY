@@ -17,7 +17,8 @@ class Event(Base):
     order_id = Column(String, ForeignKey("orders.id"), nullable=True)
     payment_id = Column(String, ForeignKey("payments.id"), nullable=True)
 
-    payload = Column(JSON, nullable=False)
+    payload = Column(JSON, nullable=False, default={})
+    idempotency_key = Column(String, unique=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships

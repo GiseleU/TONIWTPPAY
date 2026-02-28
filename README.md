@@ -78,3 +78,107 @@ Every inquiry is traceable and no duplicates are created.
 
 ```bash
 poetry install
+
+
+
+
+
+## APP DESCRITPION
+
+## Application Architecture
+
+This is a FastAPI-based backend application designed to enable small sellers to manage customer inquiries and process orders via WhatsApp, integrated with MoMo (Mobile Money) payments. The system is built with event-driven architecture, focusing on compliance with WhatsApp Business API policies.
+
+## Core Architecture
+
+**Framework & Language**: FastAPI (Python) with SQLAlchemy ORM and PostgreSQL database.
+
+**Key Components**:
+- **Models**: SQLAlchemy models for tenants, contacts, inquiries, orders, payments, events, and compliance tracking
+- **Services**: Business logic layer for command execution, summaries, compliance, and integrations
+- **API Routes**: RESTful endpoints for webhooks, commands, reports, and CRUD operations
+- **Integrations**: WhatsApp Business API client and MoMo payment webhooks
+- **Background Jobs**: Async runners for daily summary generation
+
+## Main Features
+
+### 1. WhatsApp Integration
+- Receives inbound customer messages via webhooks
+- Creates inquiries from customer messages
+- Supports coexistence status for tenant activation
+- Outbound messaging capability (client implemented but notification service not fully built)
+
+### 2. Seller Command System
+- Sellers can execute commands like:
+  - `CONFIRM T#### amount` - Confirm inquiry with amount
+  - `DROP T####` - Drop inquiry
+  - `SUMMARY` - Get daily sales/revenue summary
+- Commands are processed via API with deterministic state transitions
+- Audit logging for all command executions
+
+### 3. Order & Payment Management
+- Orders created from confirmed inquiries
+- Manual payment recording
+- MoMo webhook integration for payment notifications
+- Order state transitions (new → confirmed → completed/dropped)
+
+### 4. Reporting & Summaries
+- Daily summary generation aggregating:
+  - Orders (total, paid)
+  - Revenue (total, paid)
+  - Inquiries (total, confirmed, dropped)
+  - Compliance metrics (opt-outs, failed sends, etc.)
+- Reports API for retrieving historical summaries
+- On-demand summary via SUMMARY command
+
+### 5. Compliance & Security
+- WhatsApp coexistence status management
+- Compliance signal tracking (opt-outs, blocks, failures)
+- Idempotency keys for webhook deduplication
+- Policy guards and authorization checks
+
+## Database Schema
+
+**Key Tables**:
+- `tenants`: Seller accounts with coexistence status
+- `whatsapp_accounts`: Phone numbers associated with tenants
+- `contacts`: Customer phone numbers
+- `inquiries`: Customer messages/inquiries
+- `orders`: Confirmed orders with amounts
+- `payments`: Payment records
+- `events`: Audit log for all system actions
+- `daily_summaries`: Aggregated daily metrics
+- `compliance_signals`: WhatsApp compliance tracking
+
+## API Endpoints
+
+- `POST /webhooks/whatsapp` - Handle inbound WhatsApp messages
+- `POST /webhooks/momo` - Handle MoMo payment notifications
+- `POST /seller-commands/execute` - Execute seller commands
+- `GET /reports/daily-summary` - Retrieve daily summaries
+- `GET/POST /orders` - Order management
+- `GET/POST /payments` - Payment management
+
+## Current Implementation Status
+
+- ✅ WhatsApp webhook handling and inquiry creation
+- ✅ Seller command parsing and execution
+- ✅ Daily summary generation and reporting
+- ✅ Basic order and payment management
+- ✅ Compliance tracking and coexistence logic
+- ✅ Database migrations and models
+- ✅ Comprehensive test suite
+
+- ⚠️ Notification service for outbound WhatsApp messages (client exists, service stubbed)
+- ⚠️ Message parser for detecting commands in WhatsApp messages (service stubbed)
+- ⚠️ Automatic summary delivery (currently on-demand only)
+
+## Deployment & Configuration
+
+- Uses Poetry for dependency management
+- Alembic for database migrations
+- Environment-based configuration
+- Async support with httpx for external API calls
+- Logging and error handling throughout
+
+The application is designed for scalability with event-driven processing, proper separation of concerns, and comprehensive testing, making it suitable for production use by small businesses requiring WhatsApp-based customer interaction and order management.

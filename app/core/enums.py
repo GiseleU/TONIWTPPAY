@@ -13,10 +13,17 @@ class EventType(str, Enum):
     INBOUND_MESSAGE = "inbound_message"
     OUTBOUND_MESSAGE = "outbound_message"
     INQUIRY_CREATED = "inquiry_created"
+    INQUIRY_CONFIRMED = "inquiry_confirmed"
     INQUIRY_DROPPED = "inquiry_dropped"
     ORDER_CREATED = "order_created"
-    PAYMENT_MARKED = "payment_marked"
+    ORDER_CREATION_FAILED = "order_creation_failed"
+    PAYMENT_RECORDED = "payment_recorded"
+    PAYMENT_FAILED = "payment_failed"
     SYSTEM_ERROR = "system_error"
+    OPT_OUT = "opt_out"
+    BLOCKED_SEND = "blocked_send"
+    FAILED_SEND = "failed_send"
+    QUALITY_WARNING = "quality_warning"
 
 
 class CoexistenceStatus(str, Enum):
