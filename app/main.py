@@ -27,6 +27,12 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
+
+    @app.get("/")
+    async def root():
+        return {"message": "GwizaWTPPay is up and running babyyyyyyy"}
+    
+    
     # ---- Routers ----
     app.include_router(health.router)
     app.include_router(webhooks.router)
