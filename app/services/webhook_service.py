@@ -4,6 +4,7 @@ from app.models.contact import Contact
 from app.models.tenant import Tenant
 from app.models.event import Event
 from app.core.enums import CoexistenceStatus, EventType, ActorType
+from app.services.notification_service import get_notification_service
 import uuid
 
 
@@ -80,6 +81,65 @@ def handle_whatsapp_message(payload: dict, db: Session) -> dict:
     db.commit()
 
     return {"status": "ok", "inquiry_id": inquiry.id}
+
+
+async def send_inquiry_reminder(
+    inquiry_id: str,
+    tenant_id: str,
+    db: Session,
+    whatsapp_account_id: str = None
+) -> dict:
+    """
+    Optionally send a reminder to the seller after creating an inquiry.
+    
+    Args:
+        inquiry_id: The created inquiry ID
+        tenant_id: Tenant ID
+        db: Database session
+        whatsapp_account_id: WhatsApp account ID for sending the reminder
+        
+    Returns:
+        Dict with reminder send status
+    """
+    # Get the inquiry to find the seller's phone
+    inquiry = db.query(Inquiry).filter_by(id=inquiry_id).first()
+    if not inquiry:
+        return {"status": "error", "message": "Inquiry not found"}
+    
+    # Get tenant to find the seller's phone number
+    tenant = db.query(Tenant).filter_by(id=tenant_id).first()
+    if not tenant:
+        return {"status": "error", "message": "Tenant not found"}
+    
+    # Find the WhatsApp account to use
+    whatsapp_account = None
+    if whatsapp_account_id:
+        from app.models.whatsapp_account import WhatsAppAccount
+        whatsapp_account = db.query(WhatsAppAccount).filter_by(id=whatsapp_account_id).first()
+    
+    if not whatsapp_account and tenant.whatsapp_accounts:
+        whatsapp_account = tenant.whatsapp_accounts[0]
+    
+    if not whatsapp_account:
+        return {"status": "error", "message": "WhatsApp account not found"}
+    
+    # Send the reminder message to seller
+    reminder_message = "Ufite inquiry nshya. Andika CONFIRM gutangira order."
+    
+    try:
+        notification_service = get_notification_service()
+        result = await notification_service.send_message(
+            to_phone=tenant.phone_number,  # Seller's phone number
+            message=reminder_message,
+            tenant_id=tenant_id,
+            whatsapp_account_id=whatsapp_account.id,
+            message_type="inquiry_reminder",
+            related_inquiry_id=inquiry_id,
+            db=db
+        )
+        return {"status": "ok", "reminder_sent": True, "result": result}
+    except Exception as e:
+        return {"status": "error", "reminder_sent": False, "error": str(e)}
 
 
 def handle_momo_webhook(payload: dict, db: Session) -> dict:

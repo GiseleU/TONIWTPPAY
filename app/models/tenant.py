@@ -25,3 +25,4 @@ class Tenant(Base):
     opt_outs = relationship("OptOut", back_populates="tenant", cascade="all, delete-orphan")
     compliance_signals = relationship("ComplianceSignal", back_populates="tenant", cascade="all, delete-orphan")
     daily_summaries = relationship("DailySummary", back_populates="tenant", cascade="all, delete-orphan")
+    products = relationship("Product", back_populates="tenant", cascade="all, delete-orphan")

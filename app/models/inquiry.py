@@ -45,3 +45,9 @@ class Inquiry(Base):
         back_populates="inquiry",
         cascade="all, delete-orphan",
     )
+
+    workflow_session = relationship(
+        "WorkflowSession",
+        back_populates="inquiry",
+        uselist=False,  # 1 inquiry → 1 workflow session
+    )

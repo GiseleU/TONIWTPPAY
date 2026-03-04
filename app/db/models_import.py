@@ -8,3 +8,8 @@ from app.models.tenant import Tenant
 from app.models.whatsapp_account import WhatsAppAccount
 from app.models.consent import Consent
 from app.models.opt_out import OptOut
+from app.models.daily_summary import DailySummary
+from app.models.compliance_signal import ComplianceSignal
+from app.models.product import Product
+from app.models.order_line_item import OrderLineItem
+from app.models.workflow_session import WorkflowSession

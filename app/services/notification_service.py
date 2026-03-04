@@ -34,7 +34,8 @@ class NotificationService:
         whatsapp_account_id: str,
         message_type: str = "notification",
         related_inquiry_id: Optional[str] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
+        visible_to_customer: bool = False
     ) -> Dict[str, Any]:
         """
         Send a WhatsApp message and record the event.
@@ -47,6 +48,7 @@ class NotificationService:
             message_type: Type of message (notification, response, command_result, etc.)
             related_inquiry_id: Related inquiry ID if applicable
             db: Database session for event logging
+            visible_to_customer: If True, message is visible to customer (default: False)
 
         Returns:
             Dict with send result and message ID
@@ -64,6 +66,7 @@ class NotificationService:
                     tenant_id=tenant_id,
                     whatsapp_account_id=whatsapp_account_id,
                     inquiry_id=related_inquiry_id,
+                    visible_to_customer=visible_to_customer,
                     payload={
                         "message_id": result.get("messages", [{}])[0].get("id"),
                         "to": to_phone,
@@ -92,6 +95,7 @@ class NotificationService:
                     tenant_id=tenant_id,
                     whatsapp_account_id=whatsapp_account_id,
                     inquiry_id=related_inquiry_id,
+                    visible_to_customer=visible_to_customer,
                     payload={
                         "to": to_phone,
                         "message_type": message_type,
@@ -215,6 +219,147 @@ class NotificationService:
             message_type=f"system_{notification_type}",
             db=db
         )
+
+    async def send_yes_no_buttons(
+        self,
+        to_phone: str,
+        question: str,
+        tenant_id: str,
+        whatsapp_account_id: str,
+        message_type: str = "interactive_buttons",
+        related_inquiry_id: Optional[str] = None,
+        db: Optional[Session] = None,
+        visible_to_customer: bool = False
+    ) -> Dict[str, Any]:
+        """Send a Yes/No interactive button message."""
+        buttons = [
+            {"id": "yes", "title": "Yego"},
+            {"id": "no", "title": "Oya"}
+        ]
+
+        try:
+            result = await self.client.send_interactive_buttons(
+                to=to_phone,
+                message=question,
+                buttons=buttons
+            )
+
+            if db:
+                event = Event(
+                    id=str(uuid.uuid4()),
+                    event_type=EventType.OUTBOUND_MESSAGE,
+                    actor=ActorType.SYSTEM,
+                    tenant_id=tenant_id,
+                    whatsapp_account_id=whatsapp_account_id,
+                    inquiry_id=related_inquiry_id,
+                    visible_to_customer=visible_to_customer,
+                    payload={
+                        "message_id": result.get("messages", [{}])[0].get("id"),
+                        "to": to_phone,
+                        "message_type": message_type,
+                        "content": question,
+                        "buttons": buttons
+                    }
+                )
+                db.add(event)
+                db.commit()
+
+            return {
+                "status": "sent",
+                "message_id": result.get("messages", [{}])[0].get("id"),
+                "whatsapp_result": result
+            }
+
+        except Exception as e:
+            if db:
+                event = Event(
+                    id=str(uuid.uuid4()),
+                    event_type=EventType.FAILED_SEND,
+                    actor=ActorType.SYSTEM,
+                    tenant_id=tenant_id,
+                    whatsapp_account_id=whatsapp_account_id,
+                    inquiry_id=related_inquiry_id,
+                    visible_to_customer=visible_to_customer,
+                    payload={"to": to_phone, "message_type": message_type, "content": question, "error": str(e)}
+                )
+                db.add(event)
+                db.commit()
+
+            return {"status": "failed", "error": str(e)}
+
+    async def send_product_list(
+        self,
+        to_phone: str,
+        products: list,
+        tenant_id: str,
+        whatsapp_account_id: str,
+        message_type: str = "product_list",
+        related_inquiry_id: Optional[str] = None,
+        db: Optional[Session] = None,
+        visible_to_customer: bool = False
+    ) -> Dict[str, Any]:
+        """Send an interactive product list for selection."""
+        rows = []
+        for product in products:
+            rows.append({
+                "id": f"product_{product.id}",
+                "title": product.name,
+                "description": f"{int(product.price)} RWF"
+            })
+
+        sections = [{"title": "Ibicuruzwa", "rows": rows}]
+        message = "Hitamo igicuruzwa:"
+
+        try:
+            result = await self.client.send_interactive_list(
+                to=to_phone,
+                message=message,
+                button_text="Hitamo",
+                sections=sections
+            )
+
+            if db:
+                event = Event(
+                    id=str(uuid.uuid4()),
+                    event_type=EventType.OUTBOUND_MESSAGE,
+                    actor=ActorType.SYSTEM,
+                    tenant_id=tenant_id,
+                    whatsapp_account_id=whatsapp_account_id,
+                    inquiry_id=related_inquiry_id,
+                    visible_to_customer=visible_to_customer,
+                    payload={
+                        "message_id": result.get("messages", [{}])[0].get("id"),
+                        "to": to_phone,
+                        "message_type": message_type,
+                        "content": message,
+                        "products_count": len(products)
+                    }
+                )
+                db.add(event)
+                db.commit()
+
+            return {
+                "status": "sent",
+                "message_id": result.get("messages", [{}])[0].get("id"),
+                "whatsapp_result": result
+            }
+
+        except Exception as e:
+            if db:
+                event = Event(
+                    id=str(uuid.uuid4()),
+                    event_type=EventType.FAILED_SEND,
+                    actor=ActorType.SYSTEM,
+                    tenant_id=tenant_id,
+                    whatsapp_account_id=whatsapp_account_id,
+                    inquiry_id=related_inquiry_id,
+                    visible_to_customer=visible_to_customer,
+                    payload={"to": to_phone, "message_type": message_type, "content": message, "error": str(e)}
+                )
+                db.add(event)
+                db.commit()
+
+            return {"status": "failed", "error": str(e)}
 
 
 # Global service instance

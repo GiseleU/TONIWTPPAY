@@ -66,6 +66,18 @@ class Order(Base):
         cascade="all, delete-orphan",
     )
 
+    workflow_session = relationship(
+        "WorkflowSession",
+        back_populates="order",
+        uselist=False,  # 1 order → 1 workflow session
+    )
+
+    line_items = relationship(
+        "OrderLineItem",
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )
+
     @property
     def total_paid(self) -> Decimal:
         """Compute total paid from all payments."""

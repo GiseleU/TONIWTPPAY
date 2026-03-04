@@ -11,6 +11,9 @@ from .consent import Consent
 from .opt_out import OptOut
 from .compliance_signal import ComplianceSignal
 from .daily_summary import DailySummary
+from .workflow_session import WorkflowSession
+from .product import Product
+from .order_line_item import OrderLineItem
 
 __all__ = [
     "Tenant",
@@ -24,4 +27,7 @@ __all__ = [
     "OptOut",
     "ComplianceSignal",
     "DailySummary",
+    "WorkflowSession",
+    "Product",
+    "OrderLineItem",
 ]

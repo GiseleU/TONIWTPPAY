@@ -1,8 +1,9 @@
-from sqlalchemy import Column, String, DateTime, Enum, JSON, ForeignKey
+from sqlalchemy import Column, String, DateTime, Enum, JSON, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 from app.core.enums import EventType, ActorType
+
 
 class Event(Base):
     __tablename__ = "events"
@@ -16,6 +17,10 @@ class Event(Base):
     inquiry_id = Column(String, ForeignKey("inquiries.id"), nullable=True)
     order_id = Column(String, ForeignKey("orders.id"), nullable=True)
     payment_id = Column(String, ForeignKey("payments.id"), nullable=True)
+
+    # Customer visibility flag - if True, message is sent to customer
+    # Default is False (business-only messages)
+    visible_to_customer = Column(Boolean, default=False, nullable=False)
 
     payload = Column(JSON, nullable=False, default={})
     idempotency_key = Column(String, unique=True, nullable=True)

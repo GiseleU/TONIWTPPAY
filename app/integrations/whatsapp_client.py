@@ -73,6 +73,124 @@ class WhatsAppClient:
             print(f"Unexpected error sending WhatsApp message: {e}")
             raise
 
+    async def send_interactive_buttons(
+        self,
+        to: str,
+        message: str,
+        buttons: list[Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """
+        Send an interactive message with buttons.
+
+        Args:
+            to: Recipient phone number in international format
+            message: Text message to display
+            buttons: List of button objects with 'id' and 'title' keys
+                     e.g., [{"id": "yes", "title": "Yego"}, {"id": "no", "title": "Oya"}]
+
+        Returns:
+            WhatsApp API response
+
+        Raises:
+            HTTPException: If message sending fails
+        """
+        url = f"{self.base_url}/{self.phone_number_id}/messages"
+
+        # Format buttons for WhatsApp API
+        formatted_buttons = []
+        for button in buttons:
+            formatted_buttons.append({
+                "type": "reply",
+                "reply": {
+                    "id": button.get("id", ""),
+                    "title": button.get("title", "")[:20]  # WhatsApp limits title to 20 chars
+                }
+            })
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {
+                    "text": message
+                },
+                "action": {
+                    "buttons": formatted_buttons
+                }
+            }
+        }
+
+        try:
+            response = await self.client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            print(f"WhatsApp API error: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            print(f"Unexpected error sending interactive buttons: {e}")
+            raise
+
+    async def send_interactive_list(
+        self,
+        to: str,
+        message: str,
+        button_text: str = "Hitamo",
+        sections: list[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Send an interactive list message (for product selection).
+
+        Args:
+            to: Recipient phone number in international format
+            message: Header/description text
+            button_text: Text for the main button (default: "Hitamo")
+            sections: List of section objects for the list
+                     e.g: [{
+                         "title": "Products",
+                         "rows": [
+                             {"id": "product_1", "title": "Juice", "description": "800 RWF"},
+                             {"id": "product_2", "title": "Water", "description": "500 RWF"}
+                         ]
+                     }]
+
+        Returns:
+            WhatsApp API response
+
+        Raises:
+            HTTPException: If message sending fails
+        """
+        url = f"{self.base_url}/{self.phone_number_id}/messages"
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "list",
+                "body": {
+                    "text": message
+                },
+                "action": {
+                    "button": button_text,
+                    "sections": sections or []
+                }
+            }
+        }
+
+        try:
+            response = await self.client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            print(f"WhatsApp API error: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            print(f"Unexpected error sending interactive list: {e}")
+            raise
+
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()

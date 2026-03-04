@@ -32,3 +32,13 @@ class CoexistenceStatus(str, Enum):
     ACTIVE = "active"        # Approved and allowed to send messages
     BLOCKED = "blocked"      # Explicitly prohibited
     SUSPENDED = "suspended"  # Temporary restriction for policy violation
+
+
+class WorkflowState(str, Enum):
+    """Represents workflow session states in the order flow."""
+    AWAITING_CONFIRM = "awaiting_confirm"      # Session created, waiting for CONFIRM
+    ENTERING_PRODUCTS = "entering_products"   # Products being entered
+    ORDER_SUMMARY = "order_summary"             # Order summary displayed, waiting for YES/NO
+    AWAITING_PAYMENT = "awaiting_payment"      # Order confirmed, waiting for PAID
+    COMPLETED = "completed"                    # Payment recorded, workflow done
+    CANCELLED = "cancelled"                     # Workflow cancelled/restarted
