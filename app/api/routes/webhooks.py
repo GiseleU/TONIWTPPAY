@@ -33,16 +33,22 @@
 
 
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.services.webhook_service import handle_whatsapp_message, handle_momo_webhook
-from app.schemas.webhook import WhatsappMessage, MomoWebhook
+from app.schemas.webhook import (
+    WhatsappMessage,
+    MomoWebhook,
+    parse_whatsapp_payload,
+    MetaWhatsAppWebhook,
+)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 # ----- Meta verification token -----
 VERIFY_TOKEN = "gwizawtp_verify_2026"
+
 
 # ------------------------------
 # GET handler for WhatsApp webhook verification
@@ -62,10 +68,43 @@ async def verify_whatsapp_webhook(
 # POST handler for WhatsApp messages
 # ------------------------------
 @router.post("/whatsapp")
-async def whatsapp_webhook(request: WhatsappMessage, db: Session = Depends(get_db)):
-    payload = request.model_dump(by_alias=True)  # Convert to dict with 'from' key
+async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Handle incoming WhatsApp messages from Meta.
+    
+    Supports two payload formats:
+    1. Flat format (for testing): {"message_id": "...", "to": "...", "from": "...", "text": "..."}
+    2. Meta format (from WhatsApp API): {"object": "whatsapp_business_account", "entry": [...]}
+    """
+    # Get raw payload
+    payload = await request.json()
+    
+    # Parse payload to standardized format
+    parsed_payload = parse_whatsapp_payload(payload)
+    
+    # Extract the fields needed for the service
+    message_id = parsed_payload.get("message_id")
+    to = parsed_payload.get("to")
+    from_ = parsed_payload.get("from")
+    text = parsed_payload.get("text")
+    
+    # Validate required fields
+    if not message_id or not to or not from_:
+        raise HTTPException(
+            status_code=422, 
+            detail=f"Invalid payload: missing required fields. Got: message_id={message_id}, to={to}, from={from_}"
+        )
+    
+    # Create standardized payload for the service
+    standardized_payload = {
+        "message_id": message_id,
+        "to": to,
+        "from": from_,
+        "text": text,
+    }
+    
     try:
-        result = handle_whatsapp_message(payload, db)
+        result = handle_whatsapp_message(standardized_payload, db)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
