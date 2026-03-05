@@ -11,6 +11,7 @@ class Tenant(Base):
 
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False, unique=True)
+    phone_number = Column(String, nullable=True)  # Seller's personal WhatsApp for notifications
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     coexistence_status = Column(PgEnum(CoexistenceStatus), nullable=False, default=CoexistenceStatus.PENDING) # Only ACTIVE tenants can send/receive inquiries.
 
