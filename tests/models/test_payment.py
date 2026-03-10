@@ -15,6 +15,7 @@ def test_create_payment(db_session):
         id="W006",
         phone_number="+250788000006",
         tenant_id="T006",
+        phone_number_id="wa_test_001"
     )
 
     inquiry = Inquiry(

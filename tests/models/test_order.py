@@ -15,6 +15,7 @@ def test_create_order_from_confirmed_inquiry(db_session):
     wa = WhatsAppAccount(
         id="W005",
         phone_number="+250788000005",
+        phone_number_id="phone_005",
         tenant_id="T005",
     )
 

@@ -19,7 +19,7 @@ def setup_order(db_session: Session):
     contact = Contact(id="C001", tenant_id=tenant.id, name="Alice", phone_number="5551234")
     db_session.add(contact)
 
-    whatsapp_account = WhatsAppAccount(id="W001", tenant_id=tenant.id, phone_number="+250788000001")
+    whatsapp_account = WhatsAppAccount(id="W001", tenant_id=tenant.id, phone_number="+250788000001", phone_number_id="wa_test_001")
     db_session.add(whatsapp_account)
 
     order = Order(

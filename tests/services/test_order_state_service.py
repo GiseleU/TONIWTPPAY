@@ -13,7 +13,7 @@ def test_create_order_missing_customer_data(db_session: Session, missing_field: 
     """
     Creating an order should fail if required customer data is missing.
     """
-    whatsapp_account = WhatsAppAccount(id="WA123", tenant_id="tenant_1", phone_number="+1234567890")
+    whatsapp_account = WhatsAppAccount(id="WA123", tenant_id="tenant_1", phone_number="+1234567890", phone_number_id="wa_test_001")
     db_session.add(whatsapp_account)
     contact = Contact(id="C123", tenant_id="tenant_1", name="Alice", phone_number="0123456789")
     db_session.add(contact)
@@ -54,7 +54,7 @@ def test_create_order_success(db_session: Session):
     """
     Confirmed inquiry with all required data creates an Order and updates inquiry status.
     """
-    whatsapp_account = WhatsAppAccount(id="WA456", tenant_id="tenant_1", phone_number="+1234567891")
+    whatsapp_account = WhatsAppAccount(id="WA456", tenant_id="tenant_1", phone_number="+1234567891", phone_number_id="wa_test_001")
     db_session.add(whatsapp_account)
     contact = Contact(id="C456", tenant_id="tenant_1", name="Bob", phone_number="0987654321")
     db_session.add(contact)
@@ -96,7 +96,7 @@ def test_create_order_duplicate_prevention(db_session: Session):
     """
     Attempting to create an order for an inquiry that already has an order fails.
     """
-    whatsapp_account = WhatsAppAccount(id="WA789", tenant_id="tenant_1", phone_number="+1234567892")
+    whatsapp_account = WhatsAppAccount(id="WA789", tenant_id="tenant_1", phone_number="+1234567892", phone_number_id="wa_test_001")
     db_session.add(whatsapp_account)
     contact = Contact(id="C789", tenant_id="tenant_1", name="Carol", phone_number="111222333")
     db_session.add(contact)
@@ -141,7 +141,7 @@ def test_create_order_invalid_inquiry_status(db_session: Session):
     """
     Orders cannot be created from inquiries that are not 'confirmed'.
     """
-    whatsapp_account = WhatsAppAccount(id="WA101", tenant_id="tenant_1", phone_number="+1234567893")
+    whatsapp_account = WhatsAppAccount(id="WA101", tenant_id="tenant_1", phone_number="+1234567893", phone_number_id="wa_test_001")
     db_session.add(whatsapp_account)
     contact = Contact(id="C101", tenant_id="tenant_1", name="Dave", phone_number="444555666")
     db_session.add(contact)

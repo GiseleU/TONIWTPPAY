@@ -6,7 +6,7 @@ def test_create_whatsapp_account(db_session):
     db_session.add(tenant)
     db_session.commit()
 
-    account = WhatsAppAccount(id="W001", phone_number="+250788000001", tenant_id="T003")
+    account = WhatsAppAccount(id="W001", phone_number="+250788000001", tenant_id="T003", phone_number_id="wa_test_001")
     db_session.add(account)
     db_session.commit()
 
