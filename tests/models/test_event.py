@@ -15,6 +15,8 @@ def test_create_event(db_session):
         id="W007",
         phone_number="+250788000007",
         tenant_id="T007",
+        phone_number_id="wa_test_001"
+
     )
 
     inquiry = Inquiry(

@@ -7,7 +7,7 @@ from app.models import ComplianceSignal, Tenant, Contact, WhatsAppAccount
 def test_compliance_signal_creation(db_session):
     tenant = Tenant(id="T001", name="Test Tenant")
     contact = Contact(id="C001", tenant_id=tenant.id, name="Test", phone_number="123")
-    wa = WhatsAppAccount(id="WA001", tenant_id=tenant.id, phone_number="456")
+    wa = WhatsAppAccount(id="WA001", tenant_id=tenant.id, phone_number="456", phone_number_id="wa_test_001")
     db_session.add(tenant)
     db_session.add(contact)
     db_session.add(wa)
