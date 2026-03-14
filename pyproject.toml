@@ -1,5 +1,5 @@
 [project]
-name = "gwizawtppay"
+name = "toniwtppay"
 version = "0.1.0"
 description = "WhatsApp + MoMo order/payment workflow MVP for small businesses in Kigali"
 authors = [
