@@ -21,36 +21,50 @@ def setup_tenant(
     db = next(get_db())
     
     try:
-        # Check if WhatsApp account already exists
+        # 1️⃣ Check existing WhatsApp account AND fix phone_number_id
         existing_wa = db.query(WhatsAppAccount).filter(
             WhatsAppAccount.phone_number == whatsapp_number
         ).first()
         
         if existing_wa:
+            if existing_wa.phone_number_id != whatsapp_number:
+                existing_wa.phone_number_id = whatsapp_number
+                db.commit()
+                print(f"🔧 FIXED: Updated phone_number_id to '{whatsapp_number}'")
+            
             tenant = db.query(Tenant).filter(Tenant.id == existing_wa.tenant_id).first()
-            print(f"✅ WhatsApp account already exists: {whatsapp_number}")
+            print(f"✅ WhatsApp account ready: {whatsapp_number}")
             print(f"   Tenant: {tenant.name if tenant else 'Unknown'}")
+            print(f"   phone_number_id: {existing_wa.phone_number_id}")
             return
         
-        # Create new tenant
-        tenant = Tenant(
-            id=str(uuid.uuid4()),
-            name=tenant_name,
-            phone_number=seller_phone_number,  # Seller's personal WhatsApp
-            coexistence_status=CoexistenceStatus.ACTIVE
-        )
-        db.add(tenant)
-        db.flush()
-        print(f"✅ Created tenant: {tenant_name}")
+        # 2️⃣ Check existing tenant by name (avoid duplicates)
+        existing_tenant = db.query(Tenant).filter(Tenant.name == tenant_name).first()
+        if existing_tenant:
+            tenant = existing_tenant
+            print(f"✅ Using existing tenant: {tenant_name}")
+        else:
+            # Create new tenant
+            tenant = Tenant(
+                id=str(uuid.uuid4()),
+                name=tenant_name,
+                phone_number=seller_phone_number,
+                coexistence_status=CoexistenceStatus.ACTIVE
+            )
+            db.add(tenant)
+            db.flush()
+            print(f"✅ Created tenant: {tenant_name}")
         
-        # Create WhatsApp account with Meta test number
+        # 3️⃣ Create WhatsApp account with CRITICAL phone_number_id
         wa = WhatsAppAccount(
             id=str(uuid.uuid4()),
             tenant_id=tenant.id,
-            phone_number=whatsapp_number  # Meta-generated test number
+            phone_number=whatsapp_number,
+            phone_number_id=whatsapp_number  # ← WEBHOOK LOOKUP KEY (was missing!)
         )
         db.add(wa)
         print(f"✅ Created WhatsApp account: {whatsapp_number}")
+        print(f"   phone_number_id: {whatsapp_number} (webhook ready)")
         
         db.commit()
         print("\n🎉 Setup complete!")
@@ -72,11 +86,12 @@ if __name__ == "__main__":
     if len(sys.argv) < 4:
         print("Usage: python setup_tenant.py <tenant_name> <whatsapp_number> <seller_phone>")
         print("\nExample:")
-        print("  python setup_tenant.py 'My Business' '+250788999999' '+250788123456'")
+        print("  python setup_tenant.py 'Test Businesss' '+15551936124' '+19096755835'")
         print("\nArguments:")
         print("  tenant_name: Your business name")
-        print("  whatsapp_number: The Meta-generated test number")
-        print("  seller_phone: Your personal WhatsApp number (to receive notifications)")
+        print("  whatsapp_number: Meta phone_number_id (e.g. +15551936124)")
+        print("  seller_phone: Your personal WhatsApp (receives notifications)")
+        print("\n💡 phone_number_id must match webhook payload exactly!")
         sys.exit(1)
     
     tenant_name = sys.argv[1]
