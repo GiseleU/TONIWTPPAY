@@ -1,15 +1,15 @@
 import { motion } from "framer-motion";
-import { MessageCircle, Package, CreditCard, LineChart, Sparkles } from "lucide-react";
+import { Link2, CheckCircle, BarChart3, ShieldCheck, Sparkles } from "lucide-react";
 
 const features = [
-  { icon: MessageCircle, title: "WhatsApp Commerce", desc: "Capture and manage customer inquiries directly from WhatsApp." },
-  { icon: Package, title: "Order Management", desc: "Convert inquiries into confirmed orders." },
-  { icon: CreditCard, title: "Payment Tracking", desc: "Track customer payments and order completion." },
-  { icon: LineChart, title: "Business Insights", desc: "Daily summaries and activity reports." },
+  { icon: Link2, title: "Payment Link Generation", desc: "Generate secure payment links your customers can use to pay instantly." },
+  { icon: CheckCircle, title: "Payment Confirmations", desc: "Receive real-time notifications when payments are completed." },
+  { icon: BarChart3, title: "Sales Summaries & Reporting", desc: "Get clear summaries of your payments and sales activity." },
+  { icon: ShieldCheck, title: "Secure & Reliable", desc: "Built on cloud infrastructure with end-to-end encryption." },
 ];
 
 const FeaturesSection = () => (
-  <section id="Features" className="py-16 md:py-24">
+  <section id="features" className="py-16 md:py-24">
     <div className="container">
       <h2 className="text-center text-3xl font-bold md:text-4xl">Core Features</h2>
       <p className="mx-auto mt-3 max-w-xl text-center text-muted-foreground">

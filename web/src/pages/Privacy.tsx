@@ -20,7 +20,7 @@ const Privacy = () => (
           <section id="data-processing">
             <h2 className="text-xl font-semibold text-foreground">2. How WhatsApp Messages Are Processed</h2>
             <p className="mt-2">
-              When a customer sends a message to your business via WhatsApp, it is received through the official WhatsApp Business Platform. We process these messages to extract order details, manage inquiries, and facilitate payment tracking. Messages are processed in real time and stored securely for your records.
+              TONIWTPPay operates on the official WhatsApp Business Platform. When you interact with our service, we process relevant transaction data — such as payment link requests and confirmation notifications — to facilitate payments and generate reports. We do not store the content of personal conversations.
             </p>
           </section>
 

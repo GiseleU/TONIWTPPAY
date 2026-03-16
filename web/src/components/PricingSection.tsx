@@ -7,7 +7,7 @@ const tiers = [
     desc: "1 Tenant, Basic WhatsApp commerce, Order & Payment tracking.",
     price: "20,000 rwf",
     period: "/mo after trial",
-    features: ["1 Tenant", "Basic WhatsApp commerce", "Order & payment tracking", "Email support"],
+    features: ["1 Tenant", "Payment link generation", "Instant confirmations", "Basic sales reports", "Email support"],
     highlighted: false,
   },
   {
@@ -15,7 +15,7 @@ const tiers = [
     desc: "Up to 10 Tenants, Multi-brand dashboards, Reports.",
     price: "50,000 rwf",
     period: "/mo after trial",
-    features: ["Up to 10 Tenants", "Multi-brand dashboards", "Advanced reports", "Priority support"],
+    features: ["Up to 10 Tenants", "Multi-brand dashboards", "Advanced sales reports", "Priority support"],
     highlighted: true,
   },
   {
@@ -32,9 +32,6 @@ const PricingSection = () => (
   <section id="pricing" className="bg-secondary py-16 md:py-24">
     <div className="container">
       <h2 className="text-center text-3xl font-bold md:text-4xl">Pricing</h2>
-      <p className="mx-auto mt-3 max-w-xl text-center text-muted-foreground">
-        All plans include a <strong className="text-foreground">14-day free trial</strong>
-      </p>
 
       <div className="mt-12 grid gap-6 md:grid-cols-3">
         {tiers.map((t, i) => (

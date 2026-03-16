@@ -1,189 +1,3 @@
-# from sqlalchemy.orm import Session
-# from app.models.inquiry import Inquiry
-# from app.models.contact import Contact
-# from app.models.tenant import Tenant
-# from app.models.event import Event
-# from app.core.enums import CoexistenceStatus, EventType, ActorType
-# from app.services.notification_service import get_notification_service
-# import uuid
-
-
-# def handle_whatsapp_message(payload: dict, db: Session) -> dict:
-#     """
-#     Handles inbound WhatsApp messages:
-#     - Checks idempotency
-#     - Validates tenant coexistence status
-#     - Finds or creates contact
-#     - Creates inquiry
-#     - Records event
-#     """
-#     idempotency_key = payload.get("message_id")
-
-#     # 1️⃣ Avoid duplicate inquiries
-#     existing_inquiry = db.query(Inquiry).filter_by(idempotency_key=idempotency_key).first()
-#     if existing_inquiry:
-#         return {"status": "duplicate", "inquiry_id": existing_inquiry.id}
-
-#     # 2️⃣ Find tenant by WA number
-#     tenant = db.query(Tenant).join(Tenant.whatsapp_accounts).filter(
-#         Tenant.whatsapp_accounts.any(phone_number=payload.get("to"))
-#     ).first()
-#     if not tenant:
-#         raise ValueError("Tenant not found")
-
-#     # 3️⃣ Check coexistence status
-#     if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
-#         raise PermissionError("Tenant not active for inbound messages")
-
-#     # 4️⃣ Find or create contact
-#     contact_phone = payload.get("from")
-#     contact = db.query(Contact).filter_by(phone_number=contact_phone, tenant_id=tenant.id).first()
-#     if not contact:
-#         contact = Contact(
-#             id=str(uuid.uuid4()),
-#             phone_number=contact_phone,
-#             tenant_id=tenant.id,
-#             name=contact_phone
-#         )
-#         db.add(contact)
-#         db.flush()
-
-#     # 5️⃣ Select WhatsApp account
-#     whatsapp_account = next(
-#         (wa for wa in tenant.whatsapp_accounts if wa.phone_number == payload.get("to")),
-#         tenant.whatsapp_accounts[0]
-#     )
-
-#     # 6️⃣ Create Inquiry
-#     inquiry = Inquiry(
-#         id=str(uuid.uuid4()),
-#         tenant_id=tenant.id,
-#         contact_id=contact.id,
-#         whatsapp_account_id=whatsapp_account.id,
-#         message=payload.get("text"),
-#         idempotency_key=idempotency_key,
-#         status="new"
-#     )
-#     db.add(inquiry)
-#     db.flush()
-
-#     # 7️⃣ Record Event
-#     event = Event(
-#         id=str(uuid.uuid4()),
-#         event_type=EventType.INQUIRY_CREATED,
-#         actor=ActorType.CUSTOMER,
-#         tenant_id=tenant.id,
-#         contact_id=contact.id,
-#         inquiry_id=inquiry.id,
-#         payload=payload
-#     )
-#     db.add(event)
-#     db.commit()
-
-#     return {"status": "ok", "inquiry_id": inquiry.id}
-
-
-# async def send_inquiry_reminder(
-#     inquiry_id: str,
-#     tenant_id: str,
-#     db: Session,
-#     whatsapp_account_id: str = None
-# ) -> dict:
-#     """
-#     Optionally send a reminder to the seller after creating an inquiry.
-    
-#     Args:
-#         inquiry_id: The created inquiry ID
-#         tenant_id: Tenant ID
-#         db: Database session
-#         whatsapp_account_id: WhatsApp account ID for sending the reminder
-        
-#     Returns:
-#         Dict with reminder send status
-#     """
-#     # Get the inquiry to find the seller's phone
-#     inquiry = db.query(Inquiry).filter_by(id=inquiry_id).first()
-#     if not inquiry:
-#         return {"status": "error", "message": "Inquiry not found"}
-    
-#     # Get tenant to find the seller's phone number
-#     tenant = db.query(Tenant).filter_by(id=tenant_id).first()
-#     if not tenant:
-#         return {"status": "error", "message": "Tenant not found"}
-    
-#     # Find the WhatsApp account to use
-#     whatsapp_account = None
-#     if whatsapp_account_id:
-#         from app.models.whatsapp_account import WhatsAppAccount
-#         whatsapp_account = db.query(WhatsAppAccount).filter_by(id=whatsapp_account_id).first()
-    
-#     if not whatsapp_account and tenant.whatsapp_accounts:
-#         whatsapp_account = tenant.whatsapp_accounts[0]
-    
-#     if not whatsapp_account:
-#         return {"status": "error", "message": "WhatsApp account not found"}
-    
-#     # Send the reminder message to seller
-#     reminder_message = "Ufite inquiry nshya. Andika CONFIRM gutangira order."
-    
-#     try:
-#         notification_service = get_notification_service()
-#         result = await notification_service.send_message(
-#             to_phone=tenant.phone_number,  # Seller's phone number
-#             message=reminder_message,
-#             tenant_id=tenant_id,
-#             whatsapp_account_id=whatsapp_account.id,
-#             message_type="inquiry_reminder",
-#             related_inquiry_id=inquiry_id,
-#             db=db
-#         )
-#         return {"status": "ok", "reminder_sent": True, "result": result}
-#     except Exception as e:
-#         return {"status": "error", "reminder_sent": False, "error": str(e)}
-
-
-# def handle_momo_webhook(payload: dict, db: Session) -> dict:
-#     """
-#     Handles inbound MoMo payment notifications:
-#     - Checks idempotency using transaction ID
-#     - Finds tenant by MoMo account (simplified)
-#     - Records payment event
-#     """
-#     transaction_id = payload.get("transaction_id")
-#     if not transaction_id:
-#         raise ValueError("Transaction ID missing")
-
-#     # Avoid duplicate processing
-#     existing_event = db.query(Event).filter_by(idempotency_key=transaction_id).first()
-#     if existing_event:
-#         return {"status": "duplicate", "event_id": existing_event.id}
-
-#     # 1️⃣ Find tenant
-#     tenant = db.query(Tenant).filter_by(id=payload.get("tenant_id")).first()
-#     if not tenant:
-#         raise ValueError("Tenant not found")
-
-#     # 2️⃣ Check coexistence status
-#     if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
-#         raise PermissionError("Tenant not active for MoMo transactions")
-
-#     # 3️⃣ Record payment event
-#     event = Event(
-#         id=str(uuid.uuid4()),
-#         event_type=EventType.PAYMENT_RECORDED,
-#         actor=ActorType.SYSTEM,
-#         tenant_id=tenant.id,
-#         payload=payload,
-#         idempotency_key=transaction_id
-#     )
-#     db.add(event)
-#     db.commit()
-
-#     return {"status": "ok", "event_id": event.id}
-
-
-
-
 from sqlalchemy.orm import Session
 import uuid
 
@@ -195,141 +9,229 @@ from app.models.event import Event
 from app.core.enums import CoexistenceStatus, EventType, ActorType
 
 
+# =========================================================
+# WhatsApp Webhook Handler
+# =========================================================
 def handle_whatsapp_message(payload: dict, db: Session) -> dict:
+    """
+    Process inbound WhatsApp message from webhook.
 
-    idempotency_key = payload.get("message_id")
+    Flow:
+    1. Idempotency check
+    2. Tenant lookup via WhatsApp phone_number_id
+    3. Coexistence validation
+    4. Contact lookup or creation
+    5. WhatsApp account selection
+    6. Inquiry creation
+    7. Event recording
+    """
 
-    # ---------------------------
-    # 1️⃣ Idempotency check
-    # ---------------------------
-    existing_inquiry = db.query(Inquiry).filter_by(idempotency_key=idempotency_key).first()
-
-    if existing_inquiry:
-        return {"status": "duplicate", "inquiry_id": existing_inquiry.id}
-
-    # ---------------------------
-    # 2️⃣ Tenant lookup (FIXED)
-    # ---------------------------
-    tenant = db.query(Tenant).join(Tenant.whatsapp_accounts).filter(
-        Tenant.whatsapp_accounts.any(phone_number_id=payload.get("phone_number_id"))
-    ).first()
-
-    if not tenant:
-        raise ValueError("Tenant not found")
-
-    # ---------------------------
-    # 3️⃣ Coexistence check
-    # ---------------------------
-    if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
-        raise PermissionError("Tenant not active for inbound messages")
-
-    # ---------------------------
-    # 4️⃣ Contact lookup / create
-    # ---------------------------
+    message_id = payload.get("message_id")
+    phone_number_id = payload.get("phone_number_id")
     contact_phone = payload.get("from")
+    message_text = payload.get("text")
 
-    contact = db.query(Contact).filter_by(
-        phone_number=contact_phone,
-        tenant_id=tenant.id
-    ).first()
+    if not message_id or not phone_number_id or not contact_phone:
+        raise ValueError("Invalid WhatsApp payload")
 
-    if not contact:
+    try:
 
-        contact = Contact(
-            id=str(uuid.uuid4()),
-            phone_number=contact_phone,
-            tenant_id=tenant.id,
-            name=contact_phone
+        # ---------------------------
+        # 1️⃣ Idempotency check
+        # ---------------------------
+        existing_inquiry = (
+            db.query(Inquiry)
+            .filter_by(idempotency_key=message_id)
+            .first()
         )
 
-        db.add(contact)
+        if existing_inquiry:
+            return {
+                "status": "duplicate",
+                "inquiry_id": existing_inquiry.id,
+            }
+
+        # ---------------------------
+        # 2️⃣ Tenant lookup
+        # ---------------------------
+        tenant = (
+            db.query(Tenant)
+            .join(Tenant.whatsapp_accounts)
+            .filter(
+                Tenant.whatsapp_accounts.any(
+                    phone_number_id=phone_number_id
+                )
+            )
+            .first()
+        )
+
+        if not tenant:
+            raise ValueError("Tenant not found")
+
+        # ---------------------------
+        # 3️⃣ Coexistence check
+        # ---------------------------
+        if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
+            raise PermissionError(
+                "Tenant not active for inbound messages"
+            )
+
+        # ---------------------------
+        # 4️⃣ Contact lookup / create
+        # ---------------------------
+        contact = (
+            db.query(Contact)
+            .filter_by(
+                phone_number=contact_phone,
+                tenant_id=tenant.id,
+            )
+            .first()
+        )
+
+        if not contact:
+            contact = Contact(
+                id=str(uuid.uuid4()),
+                phone_number=contact_phone,
+                tenant_id=tenant.id,
+                name=contact_phone,
+            )
+
+            db.add(contact)
+            db.flush()
+
+        # ---------------------------
+        # 5️⃣ Select WhatsApp account
+        # ---------------------------
+        whatsapp_account = next(
+            (
+                wa
+                for wa in tenant.whatsapp_accounts
+                if wa.phone_number_id == phone_number_id
+            ),
+            None,
+        )
+
+        if not whatsapp_account:
+            raise ValueError("WhatsApp account not found")
+
+        # ---------------------------
+        # 6️⃣ Create Inquiry
+        # ---------------------------
+        inquiry = Inquiry(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant.id,
+            contact_id=contact.id,
+            whatsapp_account_id=whatsapp_account.id,
+            message=message_text,
+            idempotency_key=message_id,
+            status="new",
+        )
+
+        db.add(inquiry)
         db.flush()
 
-    # ---------------------------
-    # 5️⃣ Select WhatsApp account
-    # ---------------------------
-    whatsapp_account = next(
-        (
-            wa for wa in tenant.whatsapp_accounts
-            if wa.phone_number_id == payload.get("phone_number_id")
-        ),
-        tenant.whatsapp_accounts[0]
-    )
+        # ---------------------------
+        # 7️⃣ Record Event
+        # ---------------------------
+        event = Event(
+            id=str(uuid.uuid4()),
+            event_type=EventType.INQUIRY_CREATED,
+            actor=ActorType.CUSTOMER,
+            tenant_id=tenant.id,
+            contact_id=contact.id,
+            inquiry_id=inquiry.id,
+            payload=payload,
+        )
 
-    # ---------------------------
-    # 6️⃣ Create Inquiry
-    # ---------------------------
-    inquiry = Inquiry(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant.id,
-        contact_id=contact.id,
-        whatsapp_account_id=whatsapp_account.id,
-        message=payload.get("text"),
-        idempotency_key=idempotency_key,
-        status="new"
-    )
+        db.add(event)
 
-    db.add(inquiry)
-    db.flush()
+        db.commit()
 
-    # ---------------------------
-    # 7️⃣ Record Event
-    # ---------------------------
-    event = Event(
-        id=str(uuid.uuid4()),
-        event_type=EventType.INQUIRY_CREATED,
-        actor=ActorType.CUSTOMER,
-        tenant_id=tenant.id,
-        contact_id=contact.id,
-        inquiry_id=inquiry.id,
-        payload=payload
-    )
+        return {
+            "status": "ok",
+            "inquiry_id": inquiry.id,
+        }
 
-    db.add(event)
-    db.commit()
-
-    return {
-        "status": "ok",
-        "inquiry_id": inquiry.id
-    }
+    except Exception:
+        db.rollback()
+        raise
 
 
-
+# =========================================================
+# MoMo Webhook Handler
+# =========================================================
 def handle_momo_webhook(payload: dict, db: Session) -> dict:
     """
-    Handles inbound MoMo payment notifications:
-    - Checks idempotency using transaction ID
-    - Finds tenant by MoMo account (simplified)
-    - Records payment event
+    Handles inbound MoMo payment notifications.
+
+    Flow:
+    1. Idempotency check via transaction_id
+    2. Tenant lookup
+    3. Coexistence validation
+    4. Record payment event
     """
+
     transaction_id = payload.get("transaction_id")
+
     if not transaction_id:
         raise ValueError("Transaction ID missing")
 
-    # Avoid duplicate processing
-    existing_event = db.query(Event).filter_by(idempotency_key=transaction_id).first()
-    if existing_event:
-        return {"status": "duplicate", "event_id": existing_event.id}
+    try:
 
-    # 1️⃣ Find tenant
-    tenant = db.query(Tenant).filter_by(id=payload.get("tenant_id")).first()
-    if not tenant:
-        raise ValueError("Tenant not found")
+        # ---------------------------
+        # 1️⃣ Idempotency check
+        # ---------------------------
+        existing_event = (
+            db.query(Event)
+            .filter_by(idempotency_key=transaction_id)
+            .first()
+        )
 
-    # 2️⃣ Check coexistence status
-    if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
-        raise PermissionError("Tenant not active for MoMo transactions")
+        if existing_event:
+            return {
+                "status": "duplicate",
+                "event_id": existing_event.id,
+            }
 
-    # 3️⃣ Record payment event
-    event = Event(
-        id=str(uuid.uuid4()),
-        event_type=EventType.PAYMENT_RECORDED,
-        actor=ActorType.SYSTEM,
-        tenant_id=tenant.id,
-        payload=payload,
-        idempotency_key=transaction_id
-    )
-    db.add(event)
-    db.commit()
+        # ---------------------------
+        # 2️⃣ Find tenant
+        # ---------------------------
+        tenant_id = payload.get("tenant_id")
 
-    return {"status": "ok", "event_id": event.id}
+        tenant = db.query(Tenant).filter_by(id=tenant_id).first()
+
+        if not tenant:
+            raise ValueError("Tenant not found")
+
+        # ---------------------------
+        # 3️⃣ Coexistence check
+        # ---------------------------
+        if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
+            raise PermissionError(
+                "Tenant not active for MoMo transactions"
+            )
+
+        # ---------------------------
+        # 4️⃣ Record payment event
+        # ---------------------------
+        event = Event(
+            id=str(uuid.uuid4()),
+            event_type=EventType.PAYMENT_RECORDED,
+            actor=ActorType.SYSTEM,
+            tenant_id=tenant.id,
+            payload=payload,
+            idempotency_key=transaction_id,
+        )
+
+        db.add(event)
+
+        db.commit()
+
+        return {
+            "status": "ok",
+            "event_id": event.id,
+        }
+
+    except Exception:
+        db.rollback()
+        raise

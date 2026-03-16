@@ -17,11 +17,11 @@ const HeroSection = () => (
         transition={{ duration: 0.5 }}
       >
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight md:text-5xl lg:text-6xl">
-          Sell and Manage Orders Directly from{" "}
+          Get Paid Easily Through {" "}
           <span className="text-primary">WhatsApp</span>
         </h1>
         <p className="mt-4 max-w-lg text-lg text-muted-foreground">
-          ToniWtpPay helps businesses capture customer inquiries, confirm orders, and track payments — all through WhatsApp conversations.
+          TONIWTPPay helps businesses generate payment links, receive confirmations, and track sales directly from WhatsApp.
         </p>
 
         {/* Trust Signals */}

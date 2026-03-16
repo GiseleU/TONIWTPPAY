@@ -2,10 +2,9 @@ import { motion } from "framer-motion";
 import { MessageSquare, ClipboardList, CheckCircle, BarChart3 } from "lucide-react";
 
 const steps = [
-  { icon: MessageSquare, title: "Customer Sends a Message", desc: "A customer sends a WhatsApp message to your business." },
-  { icon: ClipboardList, title: "Inquiry & Order Recorded", desc: "ToniWtpPay records the inquiry and order automatically." },
-  { icon: CheckCircle, title: "Seller Confirms the Order", desc: "You confirm the order using simple commands." },
-  { icon: BarChart3, title: "Payment & Status Tracked", desc: "Payment and order status are tracked in real-time." },
+  { icon: MessageSquare, title: "Generate Payment Links", desc: "Create secure payment links for your customers to pay instantly." },
+  { icon: ClipboardList, title: "Receive Instant Confirmations", desc: "Know immediately when a payment is completed in real time." },
+  { icon: CheckCircle, title: "Get Business Reports", desc: "You confirm the order using simple commands." },
 ];
 
 const HowItWorks = () => (
@@ -13,7 +12,7 @@ const HowItWorks = () => (
     <div className="container">
       <h2 className="text-center text-3xl font-bold md:text-4xl">How It Works</h2>
       <p className="mx-auto mt-3 max-w-xl text-center text-muted-foreground">
-        Four simple steps to turn WhatsApp conversations into managed orders.
+        Three simple steps to start getting paid through WhatsApp.
       </p>
 
       <div className="relative mx-auto mt-12 max-w-2xl">

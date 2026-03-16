@@ -12,7 +12,7 @@ import uuid
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
-from app.integrations.whatsapp_client import get_whatsapp_client
+from app.integrations.twilio_client import get_whatsapp_client
 from app.models.event import Event
 from app.models.compliance_signal import ComplianceSignal
 from app.core.enums import EventType, ActorType
@@ -55,7 +55,7 @@ class NotificationService:
         """
         try:
             # Send the message
-            result = await self.client.send_message(to_phone, message)
+            result = self.client.send_message(to_phone, message)
 
             # Record successful send event
             if db:
@@ -238,7 +238,7 @@ class NotificationService:
         ]
 
         try:
-            result = await self.client.send_interactive_buttons(
+            result = self.client.send_interactive_buttons(
                 to=to_phone,
                 message=question,
                 buttons=buttons
@@ -311,7 +311,7 @@ class NotificationService:
         message = "Hitamo igicuruzwa:"
 
         try:
-            result = await self.client.send_interactive_list(
+            result = self.client.send_interactive_list(
                 to=to_phone,
                 message=message,
                 button_text="Hitamo",
