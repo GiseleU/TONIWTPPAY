@@ -1,54 +1,88 @@
 # tests/models/test_payment.py
-from app.models import Tenant, Contact, Inquiry, Order, Payment, WhatsAppAccount
+
+import uuid
+from decimal import Decimal
+from app.db.models_import import Payment, Tenant, Transaction
 
 
 def test_create_payment(db_session):
-    tenant = Tenant(id="T006", name="Tenant 6")
-    contact = Contact(
-        id="C004",
-        name="Eve",
-        phone_number="+250700000004",
-        tenant_id="T006",
-    )
+    """Test creating a payment linked to a tenant and transaction."""
 
-    wa = WhatsAppAccount(
-        id="W006",
-        phone_number="+250788000006",
-        tenant_id="T006",
-        phone_number_id="wa_test_001"
-    )
+    # ---- Create Tenant ----
+    tenant = Tenant(id=str(uuid.uuid4()), name="Test Tenant")
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
 
-    inquiry = Inquiry(
-        id="I003",
-        tenant_id="T006",
-        contact_id="C004",
-        whatsapp_account_id="W006",
-        message="Order inquiry",
-        status="confirmed",
+    # ---- Create Transaction ----
+    transaction = Transaction(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        seller_phone="250700000001"
     )
+    db_session.add(transaction)
+    db_session.commit()
+    db_session.refresh(transaction)
 
-    order = Order(
-        id="O002",
-        tenant_id="T006",
-        inquiry_id="I003",
-        amount=200,
-        customer_name="Eve",
-        customer_phone="+250700000004",
-        customer_address=None,
-        status="completed",
-    )
-
+    # ---- Create Payment ----
+    payment_id = str(uuid.uuid4())
     payment = Payment(
-        id="P001",
-        tenant_id="T006",
-        order_id="O002",
-        amount=200,
-        verified_by="staff_1",
-        method="cash",
-        notes="Full payment",
+        id=payment_id,
+        tenant_id=tenant.id,
+        transaction_id=transaction.id,
+        amount=Decimal("5000.00"),
+        method="momo",
+        verified_by="seller_1",
+        notes="Paid via MTN MoMo"
     )
+    db_session.add(payment)
+    db_session.commit()
+    db_session.refresh(payment)
 
-    db_session.add_all([tenant, contact, wa, inquiry, order, payment])
+    # ---- Assertions ----
+    assert payment.id == payment_id
+    assert payment.amount == Decimal("5000.00")
+    assert payment.method == "momo"
+    assert payment.verified_by == "seller_1"
+    assert payment.notes == "Paid via MTN MoMo"
+
+    # Relationships
+    assert payment.tenant.id == tenant.id
+    assert payment.transaction.id == transaction.id
+
+    # Timestamp auto-generated
+    assert payment.timestamp is not None
+
+
+def test_payment_optional_fields(db_session):
+    """Test creating a payment without optional fields."""
+
+    tenant = Tenant(id=str(uuid.uuid4()), name="Tenant Optional")
+    db_session.add(tenant)
     db_session.commit()
 
-    assert payment.order_id == "O002"
+    transaction = Transaction(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        seller_phone="250700000002"
+    )
+    db_session.add(transaction)
+    db_session.commit()
+
+    payment = Payment(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        transaction_id=transaction.id,
+        amount=Decimal("2000.00"),
+        method="cash"
+        # verified_by and notes omitted
+    )
+    db_session.add(payment)
+    db_session.commit()
+    db_session.refresh(payment)
+
+    # Assertions
+    assert payment.amount == Decimal("2000.00")
+    assert payment.method == "cash"
+    assert payment.verified_by is None
+    assert payment.notes is None

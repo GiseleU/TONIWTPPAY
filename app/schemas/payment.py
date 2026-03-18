@@ -8,16 +8,17 @@ class PaymentCreateRequest(BaseModel):
     order_id: str
     amount: Decimal
     verified_by: str
-    method: str
+    method: str  # e.g., 'cash', 'bank', 'momo'
     notes: Optional[str] = None
 
 
 class PaymentResponse(BaseModel):
     id: str
+    tenant_id: str
     order_id: str
     amount: Decimal
     verified_by: str
-    timestamp: str
+    timestamp: str  # ISO formatted string
     method: str
     notes: Optional[str]
 
@@ -25,13 +26,14 @@ class PaymentResponse(BaseModel):
 
     @classmethod
     def from_orm(cls, obj):
-        data = {
-            "id": obj.id,
-            "order_id": obj.order_id,
-            "amount": obj.amount,
-            "verified_by": obj.verified_by,
-            "timestamp": obj.timestamp.isoformat(),
-            "method": obj.method,
-            "notes": obj.notes,
-        }
-        return cls(**data)
+        """Custom from_orm to format timestamp as ISO string"""
+        return cls(
+            id=obj.id,
+            tenant_id=obj.tenant_id,
+            order_id=obj.order_id,
+            amount=obj.amount,
+            verified_by=obj.verified_by,
+            timestamp=obj.timestamp.isoformat(),
+            method=obj.method,
+            notes=obj.notes,
+        )

@@ -1,64 +1,78 @@
-# Tests for summary_service
-
+# tests/services/test_summary_service.py
 import pytest
-from sqlalchemy.orm import Session
-from app.services.summary_service import generate_daily_summary
-from app.models import DailySummary, Tenant, Order, Inquiry, Contact, WhatsAppAccount
+from unittest.mock import MagicMock
 from datetime import date
+from decimal import Decimal
+from app.services import summary_service
+from app.db.models_import import Transaction, TransactionItem, DailySummary
 
+@pytest.fixture
+def mock_db():
+    return MagicMock()
 
-def test_generate_daily_summary_creates_new(db_session: Session):
-    tenant = Tenant(id="T001", name="Test Tenant")
-    contact = Contact(id="C001", tenant_id=tenant.id, name="Test", phone_number="123")
-    wa = WhatsAppAccount(id="WA001", tenant_id=tenant.id, phone_number="456", phone_number_id="phone_wa001")
-    db_session.add(tenant)
-    db_session.add(contact)
-    db_session.add(wa)
-    summary_date = date.today()
-    order = Order(
-        id="O001",
-        tenant_id=tenant.id,
-        inquiry_id="I001",
-        amount=100.0,
-        customer_name="Test",
-        customer_phone="123",
-        created_at=summary_date
-    )
-    db_session.add(order)
-    inquiry = Inquiry(
-        id="I001",
-        tenant_id=tenant.id,
-        contact_id=contact.id,
-        whatsapp_account_id=wa.id,
-        message="Test message",
-        status="confirmed",
-        created_at=summary_date
-    )
-    db_session.add(inquiry)
-    db_session.commit()
+def create_mock_transaction(tx_id, items):
+    tx = MagicMock(spec=Transaction)
+    tx.id = tx_id
+    tx.items = items
+    return tx
 
-    summary = generate_daily_summary(db_session, tenant.id, summary_date)
+def create_mock_item(name, qty, amount):
+    item = MagicMock(spec=TransactionItem)
+    item.product_name = name
+    item.quantity = qty
+    item.total_amount = Decimal(amount)
+    return item
 
-    assert summary.tenant_id == tenant.id
-    assert summary.summary_date == summary_date
+def test_generate_daily_summary_no_transactions(mock_db):
+    mock_db.query.return_value.filter.return_value.all.return_value = []
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    summary = summary_service.generate_daily_summary(mock_db, "T001", date.today())
+
+    # New DailySummary created
+    mock_db.add.assert_called_once()
+    mock_db.commit.assert_called_once()
+    assert summary.total_orders == 0
+    assert summary.total_revenue == Decimal(0)
+    assert summary.paid_orders == 0
+    assert summary.paid_revenue == Decimal(0)
+
+def test_generate_daily_summary_with_transactions(mock_db):
+    items1 = [create_mock_item("ProductA", 2, 100), create_mock_item("ProductB", 1, 50)]
+    items2 = [create_mock_item("ProductA", 1, 50)]
+    txn1 = create_mock_transaction("TX1", items1)
+    txn2 = create_mock_transaction("TX2", items2)
+
+    mock_db.query.return_value.filter.return_value.all.return_value = [txn1, txn2]
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    summary = summary_service.generate_daily_summary(mock_db, "T001", date.today())
+
+    # Assertions on totals
+    assert summary.total_orders == 2
+    assert summary.total_revenue == Decimal(200)  # 100+50+50
+    assert summary.paid_orders == 2
+    assert summary.paid_revenue == Decimal(200)
+
+    # Ensure DB commit/add called
+    mock_db.add.assert_called_once()
+    mock_db.commit.assert_called_once()
+
+def test_generate_daily_summary_updates_existing(mock_db):
+    # Existing summary already in DB
+    existing_summary = MagicMock(spec=DailySummary)
+    mock_db.query.return_value.filter.return_value.first.return_value = existing_summary
+
+    items = [create_mock_item("ProductA", 2, 100)]
+    txn = create_mock_transaction("TX1", items)
+    mock_db.query.return_value.filter.return_value.all.return_value = [txn]
+
+    summary = summary_service.generate_daily_summary(mock_db, "T001", date.today())
+
+    # Should update existing summary, not add new
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_called_once()
     assert summary.total_orders == 1
-    assert summary.total_inquiries == 1
-
-
-def test_generate_daily_summary_updates_existing(db_session: Session):
-    tenant = Tenant(id="T002", name="Test Tenant")
-    db_session.add(tenant)
-    summary_date = date.today()
-    existing = DailySummary(
-        id="DS001",
-        tenant_id=tenant.id,
-        summary_date=summary_date,
-        total_orders=5
-    )
-    db_session.add(existing)
-    db_session.commit()
-
-    summary = generate_daily_summary(db_session, tenant.id, summary_date)
-
-    assert summary.id == existing.id
-    assert summary.total_orders == 0  # No orders, so updated to 0
+    assert summary.total_revenue == Decimal(100)
+    assert summary.paid_orders == 1
+    assert summary.paid_revenue == Decimal(100)

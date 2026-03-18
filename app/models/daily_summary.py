@@ -3,6 +3,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 from decimal import Decimal
+from app.db.utils import generate_uuid
 
 
 class DailySummary(Base):
@@ -15,7 +16,7 @@ class DailySummary(Base):
     __tablename__ = "daily_summaries"
 
     # ---- Identity ----
-    id = Column(String, primary_key=True)  # DS####
+    id = Column(String, primary_key=True, default=generate_uuid)  # DS####
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False)
 
     # ---- Date ----

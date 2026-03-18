@@ -1,74 +1,82 @@
-# Daily funnel + revenue aggregation
-
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, and_
-from app.models import Tenant, Order, Payment, Inquiry, Event, DailySummary
-from app.core.enums import EventType
-from app.core.datetime_utils import get_start_of_day, get_end_of_day
-from datetime import date, datetime, timezone
+# app/services/summary_service.py
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import date
 from decimal import Decimal
+from app.db.models_import import Transaction, TransactionItem, DailySummary
 
 
 def generate_daily_summary(db: Session, tenant_id: str, summary_date: date) -> DailySummary:
     """
-    Generate and store daily summary for a tenant on a specific date.
-
-    Aggregates revenue, orders, inquiries, and compliance metrics.
-    Ensures idempotency by updating existing summary if present.
+    Generate daily summary for a tenant:
+      - total orders
+      - total revenue
+      - product-level breakdown
     """
-    # Check if tenant exists
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant:
-        raise ValueError(f"Tenant {tenant_id} not found")
 
-    # Check if summary already exists
-    existing = db.query(DailySummary).options(joinedload(DailySummary.tenant)).filter(
-        and_(DailySummary.tenant_id == tenant_id, DailySummary.summary_date == summary_date)
-    ).first()
+    # 1. Query all transactions for the tenant on the given date
+    transactions = (
+        db.query(Transaction)
+        .filter(
+            Transaction.tenant_id == tenant_id,
+            func.date(Transaction.created_at) == summary_date,
+        )
+        .all()
+    )
 
-    if existing:
-        summary = existing
+    total_orders = len(transactions)
+
+    # 2. Aggregate total revenue and product-level breakdown
+    product_totals = {}
+    total_revenue = Decimal(0)
+
+    for txn in transactions:
+        # Explicitly iterate over TransactionItems
+        items: list[TransactionItem] = txn.items
+        for item in items:
+            total_revenue += item.total_amount
+
+            if item.product_name not in product_totals:
+                product_totals[item.product_name] = {
+                    "product_name": item.product_name,
+                    "quantity": 0,
+                    "total_amount": Decimal(0),
+                }
+
+            product_totals[item.product_name]["quantity"] += item.quantity
+            product_totals[item.product_name]["total_amount"] += item.total_amount
+
+    products_list = list(product_totals.values())
+
+    # 3. Check if a DailySummary already exists
+    summary = (
+        db.query(DailySummary)
+        .filter(
+            DailySummary.tenant_id == tenant_id,
+            DailySummary.summary_date == summary_date,
+        )
+        .first()
+    )
+
+    if summary:
+        # Update existing summary
+        summary.total_orders = total_orders
+        summary.total_revenue = total_revenue
+        summary.paid_orders = total_orders
+        summary.paid_revenue = total_revenue
     else:
+        # Create new summary
         summary = DailySummary(
-            id=f"DS{summary_date.strftime('%Y%m%d')}{tenant_id[:4].upper()}",
+            id=f"DS{tenant_id}{summary_date.strftime('%Y%m%d')}",
             tenant_id=tenant_id,
             summary_date=summary_date,
+            total_orders=total_orders,
+            total_revenue=total_revenue,
+            paid_orders=total_orders,
+            paid_revenue=total_revenue,
         )
-        summary.tenant = tenant
         db.add(summary)
 
-    start_dt = get_start_of_day(summary_date)
-    end_dt = get_end_of_day(summary_date)
-
-    # Aggregate revenue & orders
-    orders_query = db.query(Order).filter(
-        and_(Order.tenant_id == tenant_id, Order.created_at >= start_dt, Order.created_at <= end_dt)
-    )
-    summary.total_orders = orders_query.count()
-    summary.total_revenue = sum(order.amount for order in orders_query.all()) or Decimal(0)
-
-    # Paid orders and revenue
-    paid_orders = orders_query.filter(Order.status == "paid").all()
-    summary.paid_orders = len(paid_orders)
-    summary.paid_revenue = sum(order.amount for order in paid_orders) or Decimal(0)
-
-    # Funnel metrics
-    inquiries_query = db.query(Inquiry).filter(
-        and_(Inquiry.tenant_id == tenant_id, Inquiry.created_at >= start_dt, Inquiry.created_at <= end_dt)
-    )
-    summary.total_inquiries = inquiries_query.count()
-    summary.confirmed_inquiries = inquiries_query.filter(Inquiry.status == "confirmed").count()
-    summary.dropped_inquiries = inquiries_query.filter(Inquiry.status == "dropped").count()
-
-    # Compliance metrics from events
-    events_query = db.query(Event).filter(
-        and_(Event.tenant_id == tenant_id, Event.created_at >= start_dt, Event.created_at <= end_dt)
-    )
-    summary.opt_outs = events_query.filter(Event.event_type == EventType.OPT_OUT).count()
-    summary.blocked_sends = events_query.filter(Event.event_type == EventType.BLOCKED_SEND).count()
-    summary.failed_sends = events_query.filter(Event.event_type == EventType.FAILED_SEND).count()
-    summary.quality_warnings = events_query.filter(Event.event_type == EventType.QUALITY_WARNING).count()
-
     db.commit()
-    db.refresh(summary)
+
     return summary

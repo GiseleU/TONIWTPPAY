@@ -12,8 +12,6 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.tenant import Tenant
 from app.models.whatsapp_account import WhatsAppAccount
-from app.models.contact import Contact
-from app.models.inquiry import Inquiry
 from app.models.event import Event
 from app.core.enums import CoexistenceStatus
 
@@ -25,8 +23,6 @@ def setup_test_data(db: Session):
 
     # Clean up existing test data - delete in correct order
     db.query(Event).filter(Event.tenant_id.like("test-%")).delete()
-    db.query(Inquiry).filter(Inquiry.tenant_id.like("test-%")).delete()
-    db.query(Contact).filter(Contact.tenant_id.like("test-%")).delete()
     db.query(WhatsAppAccount).filter(WhatsAppAccount.tenant_id.like("test-%")).delete()
     db.query(Tenant).filter(Tenant.id.like("test-%")).delete()
     db.commit()

@@ -1,52 +1,32 @@
 # tests/models/test_event.py
-from app.models import Tenant, Contact, Inquiry, Order, Event, WhatsAppAccount
+import pytest
+from app.db.models_import import Tenant, Event
 from app.core.enums import ActorType, EventType
-
+import uuid
 
 def test_create_event(db_session):
-    tenant = Tenant(id="T007", name="Tenant 7")
-    contact = Contact(
-        id="C005",
-        name="Charlie",
-        phone_number="+250700000005",
-        tenant_id="T007",
-    )
-    wa = WhatsAppAccount(
-        id="W007",
-        phone_number="+250788000007",
-        tenant_id="T007",
-        phone_number_id="wa_test_001"
+    # Create tenant
+    tenant = Tenant(id=str(uuid.uuid4()), name="Tenant 1")
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
 
-    )
-
-    inquiry = Inquiry(
-        id="I004",
-        tenant_id="T007",
-        contact_id="C005",
-        whatsapp_account_id="W007",
-        message="Hello",
-        status="confirmed",
-    )
-
-    order = Order(
-        id="O003",
-        tenant_id="T007",
-        inquiry_id="I004",
-        amount=300,
-        customer_name="Charlie",
-        customer_phone="+250700000005",
-        customer_address=None,
-    )
-
+    # Create an event linked only to tenant
+    event_id = str(uuid.uuid4())
     event = Event(
-        id="E001",
-        tenant_id="T007",
+        id=event_id,
+        tenant_id=tenant.id,
         event_type=EventType.ORDER_CREATED,
         actor=ActorType.SYSTEM,
-        order=order,
+        visible_to_customer=True,
+        payload={"note": "Test event"},
     )
-
-    db_session.add_all([tenant, contact, wa, inquiry, order, event])
+    db_session.add(event)
     db_session.commit()
+    db_session.refresh(event)
 
-    assert event.order_id == "O003"
+    # Assertions
+    assert event.id == event_id
+    assert event.tenant.id == tenant.id
+    assert event.visible_to_customer is True
+    assert event.payload["note"] == "Test event"
