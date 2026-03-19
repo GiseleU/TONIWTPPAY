@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.db.base import Base
 from app.core.enums import WorkflowState
+from app.models.transaction import Transaction
 
 
 class ConversationState(Base):
@@ -41,5 +42,5 @@ class ConversationState(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships (light use only)
-    transaction = relationship("Transaction", foreign_keys=[current_transaction_id])
+    transaction = relationship(Transaction, foreign_keys=[current_transaction_id])
     tenant = relationship("Tenant")

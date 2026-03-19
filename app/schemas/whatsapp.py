@@ -2,9 +2,21 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 
 
+# -----------------------
+# Nested models for Meta payload
+# -----------------------
 class WhatsAppMetadata(BaseModel):
-    display_phone_number: str
-    phone_number_id: str
+    display_phone_number: Optional[str] = None
+    phone_number_id: Optional[str] = None
+
+
+class WhatsAppContactProfile(BaseModel):
+    name: str
+
+
+class WhatsAppContact(BaseModel):
+    profile: WhatsAppContactProfile
+    wa_id: str
 
 
 class WhatsAppMessageContent(BaseModel):
@@ -18,6 +30,7 @@ class WhatsAppMessageContent(BaseModel):
 class WhatsAppChangeValue(BaseModel):
     messaging_product: str = "whatsapp"
     metadata: Optional[WhatsAppMetadata] = None
+    contacts: Optional[List[WhatsAppContact]] = None
     messages: Optional[List[WhatsAppMessageContent]] = None
 
 
@@ -36,82 +49,73 @@ class MetaWhatsAppWebhook(BaseModel):
     entry: List[WhatsAppEntry] = []
 
 
+# -----------------------
+# Flattened message for service
+# -----------------------
 class WhatsappMessage(BaseModel):
     message_id: str
-    phone_number_id: Optional[str] = None
-    to: str
+    to: Optional[str] = None
     from_: str = Field(alias="from")
+    name: Optional[str] = None
     text: str
 
     class Config:
         extra = "allow"
 
 
+# -----------------------
+# Payload parser
+# -----------------------
 def parse_whatsapp_payload(payload: dict) -> dict:
     """
-    Parse Meta WhatsApp webhook payload into standardized format.
+    Parse Meta WhatsApp webhook payload into a simplified dict:
+    {
+        'message_id': str,
+        'to': str,
+        'from': str,
+        'name': str,
+        'text': str,
+        '_original': dict
+    }
     """
 
-    # Early validation for completely invalid payloads
-    has_entry = "entry" in payload and payload.get("entry")
-    has_from = "from" in payload
-    has_text = "text" in payload
-    
-    if not has_entry and not (has_from and has_text):
-        raise KeyError("Invalid payload structure")
+    # Check if payload uses Meta nested format
+    entries = payload.get("entry", [])
+    if entries:
+        entry = entries[0]
+        changes = entry.get("changes", [])
+        if changes:
+            change_value = changes[0].get("value", {})
 
-    # -----------------------
-    # Meta nested format
-    # -----------------------
-    if has_entry:
-
-        entry = payload["entry"][0]
-
-        if entry and entry.get("changes"):
-
-            change_value = entry["changes"][0].get("value", {})
             messages = change_value.get("messages", [])
+            contacts = change_value.get("contacts", [])
 
-            if messages:
-
+            if messages and contacts:
                 msg = messages[0]
-                metadata = change_value.get("metadata", {})
+                contact = contacts[0]
 
-                from_phone = msg.get("from", "")
-                text_body = msg.get("text", {}).get("body", "") if msg.get("text") else ""
-                
-                if from_phone and text_body:
-                    return {
-                        "message_id": msg.get("id", ""),
-                        "phone_number_id": metadata.get("phone_number_id"),
-                        "to": metadata.get("display_phone_number", ""),
-                        "from": from_phone,
-                        "text": text_body,
-                        "_original": payload,
-                    }
+                return {
+                    "message_id": msg.get("id", ""),
+                    "to": change_value.get("metadata", {}).get("display_phone_number"),
+                    "from": msg.get("from"),
+                    "name": contact.get("profile", {}).get("name"),
+                    "text": msg.get("text", {}).get("body", "") if msg.get("text") else "",
+                    "_original": payload,
+                }
 
-    # -----------------------
-    # Flat test format
-    # -----------------------
+    # Fallback: flat test format
     from_phone = payload.get("from", "")
     text_body = payload.get("text", "")
-    
+    name = payload.get("name", None)
+
     if from_phone and text_body:
         return {
             "message_id": payload.get("message_id", ""),
-            "phone_number_id": payload.get("phone_number_id"),
-            "to": payload.get("to", ""),
+            "to": payload.get("to", None),
             "from": from_phone,
+            "name": name,
             "text": text_body,
             "_original": payload,
         }
-    
+
     raise KeyError("Invalid payload structure")
-
-
-# class MomoWebhook(BaseModel):
-#     transaction_id: str
-#     tenant_id: str
-#     amount: Optional[float] = None
-#     status: Optional[str] = None
-#     payload: Optional[Dict[str, Any]] = None

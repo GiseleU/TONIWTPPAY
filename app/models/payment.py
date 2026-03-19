@@ -3,6 +3,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 from app.db.utils import generate_uuid
+from app.models.transaction import Transaction
 
 class Payment(Base):
     """
@@ -22,4 +23,4 @@ class Payment(Base):
 
     # Relationships
     tenant = relationship("Tenant", back_populates="payments")
-    transaction = relationship("Transaction", back_populates="payments")
+    transaction = relationship(Transaction, back_populates="payments")

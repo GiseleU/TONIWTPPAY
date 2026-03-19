@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from app.db.base import Base
 from app.db.utils import generate_uuid
 from app.core.enums import CoexistenceStatus
+from app.models.transaction import Transaction
 
 class Tenant(Base):
     __tablename__ = "tenants"
@@ -19,11 +20,9 @@ class Tenant(Base):
     )  # Only ACTIVE tenants can send/receive messages.
 
     # ---- Relationships ----
-    whatsapp_accounts = relationship(
-        "WhatsAppAccount", back_populates="tenant", cascade="all, delete-orphan"
-    )
+
     transactions = relationship(
-        "Transaction", back_populates="tenant", cascade="all, delete-orphan"
+        Transaction, back_populates="tenant", cascade="all, delete-orphan"
     )
     transaction_items = relationship(
         "TransactionItem", back_populates="tenant", cascade="all, delete-orphan"

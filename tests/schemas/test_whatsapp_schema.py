@@ -43,6 +43,7 @@ def test_meta_whatsapp_webhook_model():
     assert meta_webhook.entry[0].id == "entry_001"
 
 
+
 def test_parse_whatsapp_payload_nested():
     payload = {
         "entry": [
@@ -57,6 +58,12 @@ def test_parse_whatsapp_payload_nested():
                                 "display_phone_number": "+250700000001",
                                 "phone_number_id": "wa_test_001"
                             },
+                            "contacts": [  # <-- add this
+                                {
+                                    "profile": {"name": "Alice"},
+                                    "wa_id": "250700000002"
+                                }
+                            ],
                             "messages": [
                                 {
                                     "from": "250700000002",
@@ -78,6 +85,7 @@ def test_parse_whatsapp_payload_nested():
     assert parsed["from"] == "250700000002"
     assert parsed["to"] == "+250700000001"
     assert parsed["text"] == "Hello"
+    assert parsed["name"] == "Alice"
     assert "_original" in parsed
 
 
