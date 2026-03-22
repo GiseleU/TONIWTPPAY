@@ -11,6 +11,8 @@ from app.models.conversation_state import ConversationState
 from app.services.state_service import get_or_create_state, reset_state
 from app.services.transaction_service import create_transaction, add_item
 from app.services.summary_service import generate_daily_summary
+import logging
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.enums import WorkflowState, CoexistenceStatus
 from app.integrations.whatsapp_client import get_whatsapp_client
@@ -88,28 +90,55 @@ async def handle_message(
             )
             return
 
-        total_amount = quantity * unit_price
-        add_item(
-            db,
-            transaction_id=state.current_transaction_id,
-            tenant_id=tenant_id,
-            product_name=product_name,
-            quantity=quantity,
-            unit_price=unit_price,
-            total_amount=total_amount
-        )
+        try:
+            logger = logging.getLogger(__name__)
+            logger.info(f"Adding item: tx={state.current_transaction_id}, tenant={tenant_id}, item={product_name} x{quantity}@{unit_price}")
+            
+            add_item(
+                db,
+                transaction_id=state.current_transaction_id,
+                tenant_id=tenant_id,
+                product_name=product_name,
+                quantity=quantity,
+                unit_price=unit_price
+            )
 
-        state.state = WorkflowState.WAITING_ADD_MORE.value
-        db.commit()
-
-        buttons = [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
-        await client.send_interactive_buttons(
-            seller_phone,
-            f"Added {product_name} x{quantity} @ {unit_price} RWF each → {total_amount} RWF\n"
-            "Add another product?",
-            buttons
-        )
-        return
+            state.state = WorkflowState.WAITING_ADD_MORE.value
+            db.commit()
+            
+            buttons = [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
+            await client.send_interactive_buttons(
+                seller_phone,
+                f"✅ Added {product_name} x{quantity} @ {unit_price} RWF each → {quantity * unit_price} RWF\n"
+                "Add another product?",
+                buttons
+            )
+            return
+            
+        except ValueError as ve:
+            logger.error(f"Item add failed - invalid transaction: tx={state.current_transaction_id}, tenant={tenant_id}, error={str(ve)}")
+            await client.send_message(
+                seller_phone,
+                f"❌ Failed to add '{product_name}'. Transaction issue. Try 'PAY' again.\n"
+                f"Details logged for admin."
+            )
+            return
+            
+        except SQLAlchemyError as dbe:
+            logger.error(f"DB error adding item: tx={state.current_transaction_id}, error={str(dbe)}")
+            await client.send_message(
+                seller_phone,
+                "❌ Database error. Please try again or contact admin."
+            )
+            return
+            
+        except Exception as e:
+            logger.error(f"Unexpected error adding item: tx={state.current_transaction_id}, msg='{message}', error={str(e)}")
+            await client.send_message(
+                seller_phone,
+                "❌ Unexpected error. Please try 'PAY' again."
+            )
+            return
 
     # ---- Add more products ----
     if state.state == WorkflowState.WAITING_ADD_MORE.value:

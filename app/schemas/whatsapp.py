@@ -87,6 +87,18 @@ def parse_whatsapp_payload(payload: dict) -> dict:
         if changes:
             change_value = changes[0].get("value", {})
 
+            # Handle status updates (delivery receipts)
+            statuses = change_value.get("statuses", [])
+            if statuses:
+                print(f"📨 Status update: {statuses[0].get('status', 'unknown')} for message {statuses[0].get('id')}")
+                return {
+                    "type": "status",
+                    "status": statuses[0].get("status"),
+                    "message_id": statuses[0].get("id"),
+                    "_original": payload,
+                }
+
+            # Handle incoming messages
             messages = change_value.get("messages", [])
             contacts = change_value.get("contacts", [])
 
@@ -118,4 +130,6 @@ def parse_whatsapp_payload(payload: dict) -> dict:
             "_original": payload,
         }
 
-    raise KeyError("Invalid payload structure")
+    # If we reach here, it's a valid webhook we don't process (status, etc.)
+    print(f"ℹ️ Acknowledged webhook (no action needed): {payload.get('object')}")
+    return {"type": "acknowledged", "_original": payload}

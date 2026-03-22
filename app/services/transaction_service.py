@@ -36,15 +36,24 @@ def add_item(
     Automatically calculates total_amount = quantity * unit_price
     and updates the transaction's total.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # --- Validate Transaction exists and belongs to tenant ---
+    logger.info(f"Looking for transaction: id={transaction_id}, tenant={tenant_id}")
     transaction = db.query(Transaction).filter_by(
         id=transaction_id, 
         tenant_id=tenant_id
     ).first()
+    
+    logger.info(f"Transaction found: {transaction is not None}")
     if not transaction:
+        logger.error(f"Transaction NOT FOUND: id={transaction_id}, tenant={tenant_id}")
         raise ValueError(
             f"Transaction {transaction_id} not found or does not belong to tenant {tenant_id}"
         )
+    
+    logger.info(f"Transaction OK: {transaction.id}, total_items_before={len(transaction.items)}")
 
     # --- Convert to Decimal for accurate financial calculation ---
     quantity_dec = Decimal(quantity)
@@ -73,7 +82,8 @@ def add_item(
     transaction.total_amount = transaction_total
     db.commit()
     db.refresh(transaction)
-
+    
+    logger.info(f"Item added successfully: {product_name}, new total={transaction.total_amount}")
     return item
 
 

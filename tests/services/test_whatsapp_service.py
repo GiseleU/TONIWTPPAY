@@ -125,7 +125,6 @@ async def test_handle_message_workflow_product_line():
 
         mock_add_item.assert_called_once()
         called_args = mock_add_item.call_args.kwargs
-        assert called_args['total_amount'] == Decimal("32000")
         assert called_args['product_name'] == "Eggs"
         assert called_args['quantity'] == 32
         assert called_args['unit_price'] == Decimal("1000")
