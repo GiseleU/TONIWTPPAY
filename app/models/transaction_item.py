@@ -15,6 +15,7 @@ class TransactionItem(Base):
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
+    unit_price = Column(Numeric(12, 2), nullable=False)
     total_amount = Column(Numeric(12, 2), nullable=False)  # total for this item (quantity * unit price)
 
     # ---- Relationships ----

@@ -2,6 +2,8 @@ from sqlalchemy import Column, String, DateTime, ForeignKey
 import uuid
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
+from sqlalchemy import Numeric
+from decimal import Decimal
 from app.db.base import Base
 from app.db.utils import generate_uuid
 
@@ -16,6 +18,7 @@ class Transaction(Base):
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False, index=True)
     seller_phone = Column(String, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    total_amount = Column(Numeric(12, 2), default=Decimal('0'), nullable=False)
 
     # ---- Relationships ----
     items = relationship("TransactionItem", back_populates="transaction", cascade="all, delete-orphan")

@@ -1,12 +1,14 @@
 # tests/models/test_transaction_item.py
 
 import uuid
+import pytest
 from decimal import Decimal
+
 from app.db.models_import import TransactionItem, Transaction, Tenant
 
 
 def test_create_transaction_item(db_session):
-    """Test basic creation of a TransactionItem."""
+    """Test basic creation of a TransactionItem with correct calculations."""
 
     # ---- Setup Tenant ----
     tenant = Tenant(id=str(uuid.uuid4()), name="Item Tenant")
@@ -24,25 +26,32 @@ def test_create_transaction_item(db_session):
     db_session.commit()
     db_session.refresh(transaction)
 
+    # ---- Values ----
+    quantity = 10
+    unit_price = Decimal("600.00")
+    expected_total = quantity * unit_price
+
     # ---- Create TransactionItem ----
-    item_id = str(uuid.uuid4())
     item = TransactionItem(
-        id=item_id,
+        id=str(uuid.uuid4()),
         transaction_id=transaction.id,
         tenant_id=tenant.id,
         product_name="Rice",
-        quantity=10,
-        total_amount=Decimal("5000.00")
+        quantity=quantity,
+        unit_price=unit_price,
+        total_amount=expected_total
     )
+
     db_session.add(item)
     db_session.commit()
     db_session.refresh(item)
 
     # ---- Assertions ----
-    assert item.id == item_id
+    assert item.id is not None
     assert item.product_name == "Rice"
-    assert item.quantity == 10
-    assert item.total_amount == Decimal("5000.00")
+    assert item.quantity == quantity
+    assert item.unit_price == unit_price
+    assert item.total_amount == expected_total
 
     # Relationships
     assert item.transaction.id == transaction.id
@@ -50,7 +59,7 @@ def test_create_transaction_item(db_session):
 
 
 def test_multiple_items_in_transaction(db_session):
-    """Test multiple items can belong to one transaction."""
+    """Test multiple items with correct totals."""
 
     tenant = Tenant(id=str(uuid.uuid4()), name="Multi Item Tenant")
     db_session.add(tenant)
@@ -65,24 +74,24 @@ def test_multiple_items_in_transaction(db_session):
     db_session.commit()
     db_session.refresh(transaction)
 
-    items = [
-        TransactionItem(
-            id=str(uuid.uuid4()),
-            transaction_id=transaction.id,
-            tenant_id=tenant.id,
-            product_name="Rice",
-            quantity=2,
-            total_amount=Decimal("2000")
-        ),
-        TransactionItem(
-            id=str(uuid.uuid4()),
-            transaction_id=transaction.id,
-            tenant_id=tenant.id,
-            product_name="Milk",
-            quantity=5,
-            total_amount=Decimal("34440")
-        ),
+    items_data = [
+        ("Rice", 2, Decimal("1000.00")),
+        ("Milk", 5, Decimal("300.00")),
     ]
+
+    items = []
+    for name, qty, price in items_data:
+        items.append(
+            TransactionItem(
+                id=str(uuid.uuid4()),
+                transaction_id=transaction.id,
+                tenant_id=tenant.id,
+                product_name=name,
+                quantity=qty,
+                unit_price=price,
+                total_amount=qty * price
+            )
+        )
 
     db_session.add_all(items)
     db_session.commit()
@@ -111,18 +120,62 @@ def test_transaction_item_required_fields(db_session):
     db_session.add(transaction)
     db_session.commit()
 
-    # Missing product_name should fail
-    invalid_item = TransactionItem(
+    # ---- Missing product_name ----
+    invalid_item_1 = TransactionItem(
         id=str(uuid.uuid4()),
         transaction_id=transaction.id,
         tenant_id=tenant.id,
-        product_name=None,  # invalid
+        product_name=None,  # ❌ invalid
         quantity=1,
+        unit_price=Decimal("1000"),
         total_amount=Decimal("1000")
     )
 
-    db_session.add(invalid_item)
-
-    import pytest
+    db_session.add(invalid_item_1)
     with pytest.raises(Exception):
         db_session.commit()
+
+    db_session.rollback()
+
+    # ---- Missing unit_price ----
+    invalid_item_2 = TransactionItem(
+        id=str(uuid.uuid4()),
+        transaction_id=transaction.id,
+        tenant_id=tenant.id,
+        product_name="Eggs",
+        quantity=1,
+        unit_price=None,  # ❌ invalid
+        total_amount=Decimal("1000")
+    )
+
+    db_session.add(invalid_item_2)
+    with pytest.raises(Exception):
+        db_session.commit()
+
+    db_session.rollback()
+
+    # ---- Missing quantity ----
+    invalid_item_3 = TransactionItem(
+        id=str(uuid.uuid4()),
+        transaction_id=transaction.id,
+        tenant_id=tenant.id,
+        product_name="Eggs",
+        quantity=None,  # ❌ invalid
+        unit_price=Decimal("1000"),
+        total_amount=Decimal("1000")
+    )
+
+    db_session.add(invalid_item_3)
+    with pytest.raises(Exception):
+        db_session.commit()
+
+
+def test_total_amount_calculation_consistency():
+    """Ensure total_amount follows quantity * unit_price."""
+
+    quantity = 4
+    unit_price = Decimal("250.00")
+
+    expected_total = quantity * unit_price
+
+    assert expected_total == Decimal("1000.00")

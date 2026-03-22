@@ -52,11 +52,11 @@ def test_daily_summary_product_aggregation(db_session):
     items = [
         TransactionItem(
             id=str(uuid.uuid4()), transaction_id=tx1.id, tenant_id=tenant.id,
-            product_name="Rice", quantity=12, total_amount=Decimal("4000")
+            product_name="Rice", quantity=12, unit_price=Decimal("333.33"), total_amount=Decimal("4000")
         ),
         TransactionItem(
             id=str(uuid.uuid4()), transaction_id=tx2.id, tenant_id=tenant.id,
-            product_name="Milk", quantity=5, total_amount=Decimal("34440")
+            product_name="Milk", quantity=5, unit_price=Decimal("6888"), total_amount=Decimal("34440")
         ),
     ]
     db_session.add_all(items)

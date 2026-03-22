@@ -14,12 +14,13 @@ class AddItemRequest(BaseModel):
     tenant_id: str
     product_name: str
     quantity: int
-    total_amount: float
+    unit_price: float
 
 class AddItemResponse(BaseModel):
     item_id: str
     product_name: str
     quantity: int
+    unit_price: float
     total_amount: float
 
 class FinalizeTransactionRequest(BaseModel):

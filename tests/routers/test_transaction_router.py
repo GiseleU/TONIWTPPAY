@@ -1,13 +1,14 @@
 # tests/routers/test_transaction_router.py
 import pytest
+from decimal import Decimal
 from app.core.enums import WorkflowState
 from app.db.models_import import Transaction, TransactionItem, ConversationState
+
 
 # -----------------------------
 # Test start transaction
 # -----------------------------
 def test_start_transaction(client, db_session, tenant):
-    # Pre-create a conversation state for the seller
     state = ConversationState(
         seller_phone="0789000000",
         tenant_id=tenant.id,
@@ -23,19 +24,18 @@ def test_start_transaction(client, db_session, tenant):
     assert response.status_code == 200
     data = response.json()
     assert "transaction_id" in data
-    assert data["state"] == WorkflowState.WAITING_PRODUCT.value
+    assert data["state"] == WorkflowState.WAITING_PRODUCT_LINE.value  # matches router
 
     # Verify state updated in DB
     db_session.refresh(state)
     assert state.current_transaction_id == data["transaction_id"]
-    assert state.state == WorkflowState.WAITING_PRODUCT.value
+    assert state.state == WorkflowState.WAITING_PRODUCT_LINE.value
 
 
 # -----------------------------
 # Test add item to transaction
 # -----------------------------
 def test_add_item_to_transaction(client, db_session, tenant):
-    # Create a transaction first
     tx = Transaction(
         tenant_id=tenant.id,
         seller_phone="0789000000"
@@ -48,7 +48,7 @@ def test_add_item_to_transaction(client, db_session, tenant):
         "tenant_id": tenant.id,
         "product_name": "TestProduct",
         "quantity": 2,
-        "total_amount": 100.0
+        "unit_price": 50.0  # required field
     }
     response = client.post("/transactions/add_item", json=payload)
 
@@ -57,19 +57,22 @@ def test_add_item_to_transaction(client, db_session, tenant):
     assert data["item_id"] is not None
     assert data["product_name"] == "TestProduct"
     assert data["quantity"] == 2
-    assert data["total_amount"] == 100.0
+    assert data["unit_price"] == 50.0
+    assert data["total_amount"] == 100.0  # 2 * 50
 
     # Verify item exists in DB
     item = db_session.get(TransactionItem, data["item_id"])
     assert item is not None
     assert item.product_name == "TestProduct"
+    assert item.quantity == 2
+    assert item.unit_price == Decimal("50.0")
+    assert item.total_amount == Decimal("100.0")
 
 
 # -----------------------------
 # Test finalize transaction
 # -----------------------------
 def test_finalize_transaction(client, db_session, tenant):
-    # Create a transaction with one item
     tx = Transaction(
         tenant_id=tenant.id,
         seller_phone="0789000000"
@@ -82,12 +85,12 @@ def test_finalize_transaction(client, db_session, tenant):
         tenant_id=tenant.id,
         product_name="FinalProduct",
         quantity=1,
+        unit_price=50.0,
         total_amount=50.0
     )
     db_session.add(item)
     db_session.commit()
 
-    # Create the conversation state
     state = ConversationState(
         seller_phone="0789000000",
         tenant_id=tenant.id,
@@ -108,6 +111,7 @@ def test_finalize_transaction(client, db_session, tenant):
     data = response.json()
     assert "summary" in data
     assert "FinalProduct" in data["summary"]
+    assert "Total: 50.0" in data["summary"]
 
     # Verify state is reset
     db_session.refresh(state)
@@ -119,7 +123,7 @@ def test_finalize_transaction(client, db_session, tenant):
 # Full transaction flow (start -> add item -> finalize)
 # -----------------------------
 def test_full_transaction_flow(client, db_session, tenant):
-    # Start
+    # Start transaction
     payload_start = {"seller_phone": "0789000000", "tenant_id": tenant.id}
     response_start = client.post("/transactions/start", json=payload_start)
     assert response_start.status_code == 200
@@ -131,13 +135,13 @@ def test_full_transaction_flow(client, db_session, tenant):
         "tenant_id": tenant.id,
         "product_name": "Item1",
         "quantity": 3,
-        "total_amount": 300.0
+        "unit_price": 100.0
     }
     response_add = client.post("/transactions/add_item", json=payload_add)
     assert response_add.status_code == 200
     item_id = response_add.json()["item_id"]
 
-    # Finalize
+    # Finalize transaction
     payload_finalize = {
         "transaction_id": transaction_id,
         "seller_phone": "0789000000",
@@ -147,9 +151,9 @@ def test_full_transaction_flow(client, db_session, tenant):
     assert response_finalize.status_code == 200
     summary = response_finalize.json()["summary"]
     assert "Item1" in summary
-    assert "Total: 300.0" in summary
+    assert "Total: 300.0" in summary  # 3 * 100
 
-    # Verify state is reset in DB
+    # Verify state reset in DB
     state = db_session.query(ConversationState).filter_by(
         seller_phone="0789000000",
         tenant_id=tenant.id

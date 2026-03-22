@@ -27,6 +27,7 @@ def daily_summary_data(db_session, tenant):
             tenant_id=tenant.id,
             product_name="Test Product",
             quantity=1,
+            unit_price=Decimal("2000.00"),
             total_amount=Decimal("2000.00")
         )
         txn.items = [item]

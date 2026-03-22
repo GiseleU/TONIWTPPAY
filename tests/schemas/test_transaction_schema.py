@@ -161,18 +161,19 @@ def test_add_item_request():
         "tenant_id": "T001",
         "product_name": "Milk",
         "quantity": 5,
-        "total_amount": 2500.0
+        "unit_price": 500.0
     }
     req = AddItemRequest(**payload)
     assert req.product_name == "Milk"
     assert req.quantity == 5
-    assert req.total_amount == 2500.0
+    assert req.unit_price == 500.0
 
 def test_add_item_response():
     payload = {
         "item_id": "TI001",
         "product_name": "Milk",
         "quantity": 5,
+        "unit_price": 500.0,
         "total_amount": 2500.0
     }
     res = AddItemResponse(**payload)

@@ -50,6 +50,7 @@ def test_transaction_with_items(db_session):
             tenant_id=tenant.id,
             product_name="Rice",
             quantity=2,
+            unit_price=Decimal("1000"),
             total_amount=Decimal("2000")
         ),
         TransactionItem(
@@ -58,6 +59,7 @@ def test_transaction_with_items(db_session):
             tenant_id=tenant.id,
             product_name="Milk",
             quantity=5,
+            unit_price=Decimal("6888"),
             total_amount=Decimal("34440")
         ),
     ]
@@ -121,6 +123,7 @@ def test_transaction_cascade_delete_items(db_session):
         tenant_id=tenant.id,
         product_name="Rice",
         quantity=1,
+        unit_price=Decimal("1000"),
         total_amount=Decimal("1000")
     )
 

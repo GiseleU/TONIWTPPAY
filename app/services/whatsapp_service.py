@@ -23,17 +23,14 @@ async def handle_message(
 ):
     """
     Handles incoming WhatsApp messages via Meta webhook.
-
-    Flow:
-    phone_number → Tenant → Workflow
+    Flow: phone_number → Tenant → Workflow
     """
 
     # -----------------------
-    # 1. Resolve tenant via WhatsApp account
+    # 1. Resolve tenant
     # -----------------------
-   
     tenant = db.query(Tenant).filter(
-        Tenant.phone_number == seller_phone, 
+        Tenant.phone_number == seller_phone,
         Tenant.coexistence_status == CoexistenceStatus.ACTIVE
     ).first()
 
@@ -41,31 +38,26 @@ async def handle_message(
         raise HTTPException(status_code=404, detail="Tenant not active")
 
     tenant_id = tenant.id
-
-    # Normalize message
     msg = (message or "").strip().lower()
-
-    # Conversation state tied to user (seller_phone)
     state: ConversationState = get_or_create_state(db, seller_phone, tenant_id)
-
     client = get_whatsapp_client()
 
     # -----------------------
     # 2. Commands
     # -----------------------
-
-    # Start new sale
     if msg == "pay":
         tx = create_transaction(db, seller_phone, tenant_id)
-
-        state.state = WorkflowState.WAITING_PRODUCT.value
+        state.state = WorkflowState.WAITING_PRODUCT_LINE.value
         state.current_transaction_id = tx.id
         db.commit()
 
-        await client.send_message(seller_phone, "Enter product name:")
+        await client.send_message(
+            seller_phone,
+            "Enter <product> <quantity> <unit price> / Andika <igicuruzwa> <ingano> <igiciro>\n"
+            "Ex: amagi 2 600"
+        )
         return
 
-    # Daily summary
     if msg == "summary":
         summary = build_summary(db, tenant_id)
         await client.send_message(seller_phone, summary)
@@ -74,83 +66,79 @@ async def handle_message(
     # -----------------------
     # 3. Workflow states
     # -----------------------
-
-    if state.state == WorkflowState.WAITING_PRODUCT.value:
-        state.temp_product = message.strip()
-        state.state = WorkflowState.WAITING_QUANTITY.value
-        db.commit()
-
-        await client.send_message(seller_phone, "Enter quantity:")
-        return
-
-    if state.state == WorkflowState.WAITING_QUANTITY.value:
-        state.temp_quantity = message.strip()
-        state.state = WorkflowState.WAITING_AMOUNT.value
-        db.commit()
-
-        await client.send_message(seller_phone, "Enter total amount (RWF):")
-        return
-
-    if state.state == WorkflowState.WAITING_AMOUNT.value:
-        try:
-            total_amount = Decimal(message.strip())
-        except Exception:
+    # ---- Product line input ----
+    if state.state == WorkflowState.WAITING_PRODUCT_LINE.value:
+        parts = message.strip().split()
+        if len(parts) != 3:
             await client.send_message(
                 seller_phone,
-                "Invalid amount. Please enter a number for total amount (RWF)."
+                "Invalid format. Please enter: <product> <quantity> <unit price>.\n"
+                "Ex: amagi 2 600"
             )
             return
 
+        product_name, quantity_str, unit_price_str = parts
+        try:
+            quantity = int(quantity_str)
+            unit_price = Decimal(unit_price_str)
+        except Exception:
+            await client.send_message(
+                seller_phone,
+                "Quantity must be an integer and unit price must be a number.\nEx: amagi 2 600"
+            )
+            return
+
+        total_amount = quantity * unit_price
         add_item(
             db,
             transaction_id=state.current_transaction_id,
             tenant_id=tenant_id,
-            product_name=state.temp_product,
-            quantity=int(state.temp_quantity),
+            product_name=product_name,
+            quantity=quantity,
+            unit_price=unit_price,
             total_amount=total_amount
         )
 
         state.state = WorkflowState.WAITING_ADD_MORE.value
-        state.temp_product = None
-        state.temp_quantity = None
         db.commit()
 
-        buttons = [
-            {"id": "yes", "title": "Yes"},
-            {"id": "no", "title": "No"}
-        ]
-
+        buttons = [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
         await client.send_interactive_buttons(
             seller_phone,
+            f"Added {product_name} x{quantity} @ {unit_price} RWF each → {total_amount} RWF\n"
             "Add another product?",
             buttons
         )
         return
 
+    # ---- Add more products ----
     if state.state == WorkflowState.WAITING_ADD_MORE.value:
         if msg in ["yes", "y"]:
-            state.state = WorkflowState.WAITING_PRODUCT.value
+            state.state = WorkflowState.WAITING_PRODUCT_LINE.value
             db.commit()
-
-            await client.send_message(seller_phone, "Enter product name:")
+            await client.send_message(
+                seller_phone,
+                "Enter <product> <quantity> <unit price>\nEx: amagi 2 600"
+            )
+            return
 
         elif msg in ["no", "n"]:
+            # Use the new finalize_transaction function
             response = finalize_transaction(db, state)
-
             reset_state(state, db)
             db.commit()
-
             await client.send_message(seller_phone, response)
+            return
 
         else:
             await client.send_message(
                 seller_phone,
                 "Please reply with 'yes' or 'no'."
             )
-        return
+            return
 
     # -----------------------
-    # Default fallback
+    # 4. Default fallback
     # -----------------------
     await client.send_message(
         seller_phone,
@@ -159,9 +147,8 @@ async def handle_message(
 
 
 # -----------------------------
-# Helper Functions
+# HELPER: finalize transaction
 # -----------------------------
-
 def finalize_transaction(db: Session, state: ConversationState) -> str:
     items = db.query(TransactionItem).filter_by(
         transaction_id=state.current_transaction_id
@@ -171,25 +158,28 @@ def finalize_transaction(db: Session, state: ConversationState) -> str:
         return "No items recorded for this transaction."
 
     total = sum(i.total_amount for i in items)
-
     lines = ["✅ Sale recorded", "Items:"]
     for i in items:
-        lines.append(f"- {i.product_name} x{i.quantity} → {i.total_amount} RWF")
-
+        lines.append(f"- {i.product_name} x{i.quantity} @ {i.unit_price} → {i.total_amount} RWF")
     lines.append(f"\n💰 Total: {total} RWF")
-
+    
+    # Reset state after finalizing transaction
+    reset_state(state, db)
+    db.commit()
+    
     return "\n".join(lines)
 
 
+# -----------------------------
+# HELPER: build summary
+# -----------------------------
 def build_summary(db: Session, tenant_id: str) -> str:
     data = generate_daily_summary(db, tenant_id, date.today())
-
     if not data or not data.total_orders:
         return "No sales recorded today."
 
     lines = ["📊 Today's Sales Summary:"]
     total = Decimal(0)
-
     for item in getattr(data, "items", []):
         lines.append(
             f"{item['product_name']}:\n"
@@ -199,5 +189,4 @@ def build_summary(db: Session, tenant_id: str) -> str:
         total += item['total_amount']
 
     lines.append(f"💰 Total Revenue: {total} RWF")
-
     return "\n".join(lines)
