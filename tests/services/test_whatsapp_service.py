@@ -45,7 +45,7 @@ async def test_handle_message_pay_starts_transaction():
         mock_db.commit.assert_called()
         async_client.send_message.assert_awaited_with(
             seller_phone,
-            "Enter <product> <quantity> <unit price> / Andika <igicuruzwa> <ingano> <igiciro>\nEx: amagi 2 600"
+            "Enter <product> <quantity> <unit price>\nEx: amagi 2 600"
         )
 
 
@@ -62,15 +62,17 @@ async def test_handle_message_summary_sends_summary():
     mock_state = MagicMock(state=WorkflowState.IDLE.value)
     async_client = AsyncMock()
 
-    mock_summary = MagicMock()
-    mock_summary.total_orders = 1
-    mock_summary.items = [
-        {"product_name": "Eggs", "quantity": 2, "total_amount": Decimal("1000")},
-    ]
+    mock_summary = {
+        "total_orders": 1,
+        "total_revenue": Decimal("1000"),
+        "items": [
+            {"product_name": "Eggs", "quantity": 2, "total_amount": Decimal("1000")}
+        ]
+    }
 
     with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
          patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
-         patch("app.services.whatsapp_service.generate_daily_summary", return_value=mock_summary):
+         patch("app.services.whatsapp_service.get_today_summary", return_value=mock_summary):
 
         await whatsapp_service.handle_message(mock_db, seller_phone, "summary")
 
@@ -79,6 +81,7 @@ async def test_handle_message_summary_sends_summary():
         assert sent_phone == seller_phone
         assert "Eggs" in sent_text
         assert "Total Revenue" in sent_text
+        assert "1000 RWF" in sent_text
 
 
 # --------------------------
@@ -102,7 +105,7 @@ async def test_handle_message_no_whatsapp_account():
 
 
 # --------------------------
-# TEST: WAITING_PRODUCT_LINE
+# TEST: Workflow product input
 # --------------------------
 @pytest.mark.asyncio
 async def test_handle_message_workflow_product_line():
@@ -161,14 +164,16 @@ def test_build_summary_returns_text():
     tenant_id = "T001"
     from app.services.whatsapp_service import build_summary
 
-    mock_summary = MagicMock()
-    mock_summary.total_orders = 2
-    mock_summary.items = [
-        {"product_name": "Prod1", "quantity": 2, "total_amount": Decimal("100")},
-        {"product_name": "Prod2", "quantity": 1, "total_amount": Decimal("50")},
-    ]
+    mock_summary = {
+        "total_orders": 2,
+        "total_revenue": Decimal("150"),
+        "items": [
+            {"product_name": "Prod1", "quantity": 2, "total_amount": Decimal("100")},
+            {"product_name": "Prod2", "quantity": 1, "total_amount": Decimal("50")},
+        ]
+    }
 
-    with patch("app.services.whatsapp_service.generate_daily_summary", return_value=mock_summary):
+    with patch("app.services.whatsapp_service.get_today_summary", return_value=mock_summary):
         result = build_summary(mock_db, tenant_id)
 
         assert "📊 Today's Sales Summary:" in result
@@ -178,7 +183,7 @@ def test_build_summary_returns_text():
 
 
 # --------------------------
-# TEST: handle_message finalize resets state
+# TEST: finalize resets state
 # --------------------------
 @pytest.mark.asyncio
 async def test_handle_message_finalize_calls_service_and_resets_state():
@@ -195,12 +200,147 @@ async def test_handle_message_finalize_calls_service_and_resets_state():
          patch("app.services.whatsapp_service.finalize_transaction", return_value="CONFIRMATION") as mock_finalize, \
          patch("app.services.whatsapp_service.reset_state") as mock_reset_state:
 
-        # Simulate reset_state properly updates mock_state
-        mock_reset_state.side_effect = lambda state, db: setattr(state, "current_transaction_id", None) or setattr(state, "state", WorkflowState.IDLE.value)
+        def fake_reset(state, db):
+            state.state = WorkflowState.IDLE.value
+            state.current_transaction_id = None
+        mock_reset_state.side_effect = fake_reset
 
         await whatsapp_service.handle_message(mock_db, seller_phone, "no")
 
         mock_finalize.assert_called_once_with(mock_db, mock_state)
         assert mock_state.state == WorkflowState.IDLE.value
         assert mock_state.current_transaction_id is None
+        async_client.send_message.assert_awaited_with(seller_phone, "CONFIRMATION")
+
+
+# --------------------------
+# TEST: Invalid format product input
+# --------------------------
+@pytest.mark.asyncio
+async def test_handle_message_invalid_format_during_product_line():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = Tenant(id="T001", phone_number=seller_phone, coexistence_status=CoexistenceStatus.ACTIVE)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(state=WorkflowState.WAITING_PRODUCT_LINE.value, current_transaction_id="TX001")
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "invalid input")
+        async_client.send_message.assert_awaited()
+        assert "Invalid format" in async_client.send_message.call_args[0][1]
+
+
+# --------------------------
+# TEST: Invalid response during add more
+# --------------------------
+@pytest.mark.asyncio
+async def test_handle_message_invalid_response_during_add_more():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = Tenant(id="T001", phone_number=seller_phone, coexistence_status=CoexistenceStatus.ACTIVE)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(state=WorkflowState.WAITING_ADD_MORE.value, current_transaction_id="TX001")
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "maybe")
+        async_client.send_message.assert_awaited()
+        assert "Reply 'yes' or 'no'" in async_client.send_message.call_args[0][1]
+
+
+# --------------------------
+# TEST: Empty message
+# --------------------------
+@pytest.mark.asyncio
+async def test_handle_message_empty_message_no_response():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = Tenant(id="T001", phone_number=seller_phone, coexistence_status=CoexistenceStatus.ACTIVE)
+    mock_db_queries(mock_db, tenant)
+
+    async_client = AsyncMock()
+
+    empty_state = MagicMock(state=WorkflowState.IDLE.value)
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=empty_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "")
+        async_client.send_message.assert_not_awaited()
+
+
+# --------------------------
+# TEST: Non-IDLE random input triggers invalid format (not fallback)
+# --------------------------
+@pytest.mark.asyncio
+async def test_handle_message_non_idle_no_fallback():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = Tenant(id="T001", phone_number=seller_phone, coexistence_status=CoexistenceStatus.ACTIVE)
+    mock_db_queries(mock_db, tenant)
+
+    async_client = AsyncMock()
+    non_idle_state = MagicMock(state=WorkflowState.WAITING_PRODUCT_LINE.value)
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=non_idle_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "hello")
+
+        async_client.send_message.assert_awaited()
+        assert "Invalid format" in async_client.send_message.call_args[0][1]
+
+
+# --------------------------
+# TEST: IDLE fallback
+# --------------------------
+@pytest.mark.asyncio
+async def test_handle_message_idle_fallback_sent():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = Tenant(id="T001", phone_number=seller_phone, coexistence_status=CoexistenceStatus.ACTIVE)
+    mock_db_queries(mock_db, tenant)
+
+    async_client = AsyncMock()
+    idle_state = MagicMock(state=WorkflowState.IDLE.value)
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=idle_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "hello")
+
+        async_client.send_message.assert_awaited()
+        assert "Send PAY to record a sale or SUMMARY" in async_client.send_message.call_args[0][1]
+
+
+# --------------------------
+# TEST: full workflow multi-word product
+# --------------------------
+@pytest.mark.asyncio
+async def test_full_workflow_multi_word_product():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = Tenant(id="T001", phone_number=seller_phone, coexistence_status=CoexistenceStatus.ACTIVE)
+    mock_db_queries(mock_db, tenant)
+
+    async_client = AsyncMock()
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.whatsapp_service.create_transaction", return_value=MagicMock(id="TX001")), \
+         patch("app.services.whatsapp_service.add_item") as mock_add_item, \
+         patch("app.services.whatsapp_service.finalize_transaction", return_value="CONFIRMATION"):
+
+        # Start transaction
+        await whatsapp_service.handle_message(mock_db, seller_phone, "pay")
+
+        # Add multi-word product
+        mock_state.state = WorkflowState.WAITING_PRODUCT_LINE.value
+        mock_state.current_transaction_id = "TX001"
+        await whatsapp_service.handle_message(mock_db, seller_phone, "Large Eggs 5 200")
+        mock_add_item.assert_called_once()
+
+        # Finish transaction
+        mock_state.state = WorkflowState.WAITING_ADD_MORE.value
+        await whatsapp_service.handle_message(mock_db, seller_phone, "no")
         async_client.send_message.assert_awaited_with(seller_phone, "CONFIRMATION")

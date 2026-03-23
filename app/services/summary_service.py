@@ -1,54 +1,98 @@
 # app/services/summary_service.py
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 from datetime import date
 from decimal import Decimal
+
 from app.db.models_import import Transaction, TransactionItem, DailySummary
+from app.core.datetime_utils import get_start_of_day, get_end_of_day
 
-
-def generate_daily_summary(db: Session, tenant_id: str, summary_date: date) -> DailySummary:
+# -----------------------------
+# REAL-TIME SUMMARY (WhatsApp)
+# -----------------------------
+def get_today_summary(db: Session, tenant_id: str, target_date: date):
     """
-    Generate daily summary for a tenant:
-      - total orders
-      - total revenue
-      - product-level breakdown
+    Real-time summary for WhatsApp.
+    Uses Transaction + TransactionItem as source of truth.
     """
 
-    # 1. Query all transactions for the tenant on the given date
+    start = get_start_of_day(target_date)
+    end = get_end_of_day(target_date)
+
     transactions = (
         db.query(Transaction)
+        .options(joinedload(Transaction.items))
         .filter(
             Transaction.tenant_id == tenant_id,
-            func.date(Transaction.created_at) == summary_date,
+            Transaction.created_at >= start,
+            Transaction.created_at <= end,
         )
         .all()
     )
 
-    total_orders = len(transactions)
+    if not transactions:
+        return {
+            "total_orders": 0,
+            "total_revenue": Decimal("0"),
+            "items": [],
+        }
 
-    # 2. Aggregate total revenue and product-level breakdown
     product_totals = {}
-    total_revenue = Decimal(0)
+    total_revenue = Decimal("0")
 
     for txn in transactions:
-        # Explicitly iterate over TransactionItems
-        items: list[TransactionItem] = txn.items
-        for item in items:
-            total_revenue += item.total_amount
+        for item in txn.items:
+            item_total = item.total_amount or Decimal("0")
+            total_revenue += item_total
 
             if item.product_name not in product_totals:
                 product_totals[item.product_name] = {
                     "product_name": item.product_name,
                     "quantity": 0,
-                    "total_amount": Decimal(0),
+                    "total_amount": Decimal("0"),
                 }
 
             product_totals[item.product_name]["quantity"] += item.quantity
-            product_totals[item.product_name]["total_amount"] += item.total_amount
+            product_totals[item.product_name]["total_amount"] += item_total
 
-    products_list = list(product_totals.values())
+    return {
+        "total_orders": len(transactions),
+        "total_revenue": total_revenue,
+        "items": list(product_totals.values()),
+    }
 
-    # 3. Check if a DailySummary already exists
+
+# -----------------------------
+# BATCH SUMMARY (for background jobs)
+# -----------------------------
+def generate_daily_summary(
+    db: Session, tenant_id: str, summary_date: date
+) -> DailySummary:
+    """
+    Aggregated summary stored in DB (used for analytics / dashboards).
+    Calculates totals from TransactionItems for robustness.
+    """
+
+    start = get_start_of_day(summary_date)
+    end = get_end_of_day(summary_date)
+
+    transactions = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.items))
+        .filter(
+            Transaction.tenant_id == tenant_id,
+            Transaction.created_at >= start,
+            Transaction.created_at <= end,
+        )
+        .all()
+    )
+
+    total_orders = len(transactions)
+    total_revenue = sum(
+        (sum((item.total_amount or Decimal("0")) for item in txn.items) for txn in transactions),
+        Decimal("0")
+    )
+
+    # Fetch existing summary or create new
     summary = (
         db.query(DailySummary)
         .filter(
@@ -59,13 +103,11 @@ def generate_daily_summary(db: Session, tenant_id: str, summary_date: date) -> D
     )
 
     if summary:
-        # Update existing summary
         summary.total_orders = total_orders
         summary.total_revenue = total_revenue
         summary.paid_orders = total_orders
         summary.paid_revenue = total_revenue
     else:
-        # Create new summary
         summary = DailySummary(
             id=f"DS{tenant_id}{summary_date.strftime('%Y%m%d')}",
             tenant_id=tenant_id,
@@ -78,5 +120,4 @@ def generate_daily_summary(db: Session, tenant_id: str, summary_date: date) -> D
         db.add(summary)
 
     db.commit()
-
     return summary
