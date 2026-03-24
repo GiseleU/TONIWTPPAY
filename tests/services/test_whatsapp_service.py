@@ -77,6 +77,7 @@ async def test_handle_message_summary_sends_summary():
         "total_orders": 1,
         "total_revenue": Decimal("1000"),
         "total_profit": None,
+        "profit_complete": False,
         "items": [
             {"product_name": "Eggs", "quantity": 2, "total_amount": Decimal("1000"), "total_profit": None}
         ]
@@ -271,6 +272,7 @@ def test_build_summary_with_profit():
         "total_orders": 1,
         "total_revenue": Decimal("9000"),
         "total_profit": Decimal("3000"),
+        "profit_complete": True,
         "items": [
             {"product_name": "amashu", "quantity": 3, "total_amount": Decimal("9000"), "total_profit": Decimal("3000")}
         ]
@@ -305,7 +307,7 @@ async def test_handle_message_finalize_calls_service_and_resets_state():
          patch("app.services.whatsapp_service._build_sale_summary", return_value="CONFIRMATION") as mock_build, \
          patch("app.services.whatsapp_service.reset_state") as mock_reset:
 
-        def fake_reset(state, db):
+        def fake_reset(state, _db):
             state.state = WorkflowState.IDLE.value
             state.current_transaction_id = None
         mock_reset.side_effect = fake_reset

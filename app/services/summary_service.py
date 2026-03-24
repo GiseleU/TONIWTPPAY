@@ -39,6 +39,7 @@ def get_today_summary(db: Session, tenant_id: str, target_date: date):
     product_totals = {}
     total_revenue = Decimal("0")
     total_profit: Decimal | None = None
+    any_missing_cost = False
 
     for txn in transactions:
         for item in txn.items:
@@ -60,11 +61,14 @@ def get_today_summary(db: Session, tenant_id: str, target_date: date):
                 p = product_totals[item.product_name]
                 p["total_profit"] = (p["total_profit"] or Decimal("0")) + item.profit
                 total_profit = (total_profit or Decimal("0")) + item.profit
+            else:
+                any_missing_cost = True
 
     return {
         "total_orders": len(transactions),
         "total_revenue": total_revenue,
         "total_profit": total_profit,
+        "profit_complete": total_profit is not None and not any_missing_cost,
         "items": list(product_totals.values()),
     }
 

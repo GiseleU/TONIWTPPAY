@@ -244,8 +244,24 @@ def _build_sale_summary(
 
     lines.append(f"\n💰 Total today so far: *{_fmt(today['total_revenue'])} RWF*")
 
-    if today.get("total_profit") is not None:
-        lines.append(f"🟢 Profit: *{_fmt(today['total_profit'])} RWF*")
+    today_profit = today.get("total_profit")
+    today_profit_complete = today.get("profit_complete", False)
+
+    if today_profit is not None:
+        if today_profit_complete:
+            lines.append(f"🟢 Profit: *{_fmt(today_profit)} RWF*")
+        else:
+            tracked = [i["product_name"] for i in today["items"] if i.get("total_profit") is not None]
+            product_str = ", ".join(f"*{n}*" for n in tracked)
+            lines.append(f"🟢 Profit from {product_str}: *{_fmt(today_profit)} RWF*")
+
+    # Nudge for items in this transaction missing cost
+    missing_in_tx = [i.product_name for i in result.items if i.cost_per_unit is None]
+    if missing_in_tx and result.total_profit is not None:
+        names = ", ".join(f"*{n}*" for n in missing_in_tx)
+        lines.append(f"💡 Add cost for {names} next time to see your full profit")
+    elif result.total_profit is None:
+        lines.append("💡 Try adding costs next time to start tracking profit!")
 
     lines.append(f"\nYou're doing great today, {seller_name}! 🔥")
 
@@ -297,12 +313,18 @@ def build_summary(db: Session, tenant_id: str, seller_name: str) -> str:
     lines.append(f"\n💰 Revenue: *{_fmt(data['total_revenue'])} RWF*")
 
     total_profit = data.get("total_profit")
+    profit_complete = data.get("profit_complete", False)
     if total_profit is not None and data["total_revenue"] > 0:
-        margin_pct = (total_profit / data["total_revenue"] * 100).quantize(
-            Decimal("1"), rounding=ROUND_HALF_UP
-        )
-        lines.append(f"🟢 Profit: *{_fmt(total_profit)} RWF*")
-        lines.append(f"📈 Margin: *{margin_pct}%*")
+        if profit_complete:
+            margin_pct = (total_profit / data["total_revenue"] * 100).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+            lines.append(f"🟢 Profit: *{_fmt(total_profit)} RWF*")
+            lines.append(f"📈 Margin: *{margin_pct}%*")
+        else:
+            tracked = [item["product_name"] for item in data["items"] if item.get("total_profit") is not None]
+            product_str = ", ".join(f"*{n}*" for n in tracked)
+            lines.append(f"🟢 Profit from {product_str}: *{_fmt(total_profit)} RWF*")
 
     if best_product:
         lines.append(f"\n🏆 Best seller today: *{best_product}*")
@@ -310,6 +332,16 @@ def build_summary(db: Session, tenant_id: str, seller_name: str) -> str:
     if thin_margin_products:
         name, margin = thin_margin_products[0]
         lines.append(f"💡 {name} has a thin margin ({margin}%) — worth reviewing your price?")
+
+    # Nudge for products without cost data
+    no_cost_products = [item["product_name"] for item in data["items"] if item.get("total_profit") is None]
+    if no_cost_products and total_profit is not None:
+        # Some products have cost, some don't — partial profit shown
+        names = ", ".join(f"*{n}*" for n in no_cost_products[:2])
+        suffix = "..." if len(no_cost_products) > 2 else ""
+        lines.append(f"💡 Profit shown is partial — add cost for {names}{suffix} to see the full picture")
+    elif no_cost_products and total_profit is None:
+        lines.append("💡 Add costs when recording sales to start tracking your daily profit")
 
     sales_count = data["total_orders"]
     lines.append(
