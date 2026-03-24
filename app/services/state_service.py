@@ -36,8 +36,9 @@ def reset_state(state: ConversationState, db: Session = None):
     """
     state.state = WorkflowState.IDLE.value
     state.current_transaction_id = None
-    state.temp_product = None
+    state.temp_product_name = None
     state.temp_quantity = None
+    state.temp_unit_price = None
 
     if db:
         db.commit()

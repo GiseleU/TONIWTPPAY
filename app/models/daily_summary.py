@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Date, DateTime, Numeric, Integer, ForeignKey
+from sqlalchemy import Column, String, Date, DateTime, Numeric, Integer, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -10,28 +10,29 @@ class DailySummary(Base):
     """
     Aggregated daily summary for tenant performance and compliance monitoring.
 
-    Captures key metrics like revenue, order counts, inquiry funnel, compliance signals.
+    Profit fields follow the same convention as Transaction:
+    - total_profit: NULL means no cost data at all, 0 means cost == revenue
+    - profit_complete: True only if every item that day had cost_per_unit
     """
 
     __tablename__ = "daily_summaries"
 
     # ---- Identity ----
-    id = Column(String, primary_key=True, default=generate_uuid)  # DS####
+    id = Column(String, primary_key=True, default=generate_uuid)
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False)
 
     # ---- Date ----
-    summary_date = Column(Date, nullable=False)  # Date for the summary
+    summary_date = Column(Date, nullable=False)
 
     # ---- Revenue & Orders ----
     total_orders = Column(Integer, nullable=False, default=0)
-    total_revenue = Column(Numeric(10, 2), nullable=False, default=Decimal(0))
+    total_revenue = Column(Numeric(12, 2), nullable=False, default=Decimal(0))
     paid_orders = Column(Integer, nullable=False, default=0)
-    paid_revenue = Column(Numeric(10, 2), nullable=False, default=Decimal(0))
+    paid_revenue = Column(Numeric(12, 2), nullable=False, default=Decimal(0))
 
-    # ---- Funnel Metrics ----
-    total_inquiries = Column(Integer, nullable=False, default=0)
-    confirmed_inquiries = Column(Integer, nullable=False, default=0)
-    dropped_inquiries = Column(Integer, nullable=False, default=0)
+    # ---- Profit Tracking ----
+    total_profit = Column(Numeric(12, 2), nullable=True)
+    profit_complete = Column(Boolean, nullable=False, default=False)
 
     # ---- Compliance Metrics ----
     opt_outs = Column(Integer, nullable=False, default=0)

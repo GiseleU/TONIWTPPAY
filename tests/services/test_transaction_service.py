@@ -1,6 +1,5 @@
 # tests/services/test_transaction_service.py
 
-import uuid
 from decimal import Decimal
 import pytest
 from unittest.mock import MagicMock
@@ -86,11 +85,8 @@ def test_transaction_total_amount_multiple_items(db_session, tenant):
 
 
 # -----------------------------
-# Test: finalize_transaction_service (fixed)
+# Test: finalize_transaction_service
 # -----------------------------
-from app.models.conversation_state import ConversationState
-from app.core.enums import WorkflowState
-
 def test_finalize_transaction(db_session, tenant):
     # --- Create transaction ---
     tx = transaction_service.create_transaction(
@@ -100,49 +96,39 @@ def test_finalize_transaction(db_session, tenant):
     )
 
     # --- Add items ---
-    item1 = transaction_service.add_item(
+    transaction_service.add_item(
         db=db_session,
         transaction_id=tx.id,
         tenant_id=tenant.id,
         product_name="Apples",
         quantity=3,
-        unit_price=200.0
+        unit_price=200.0,
+        cost_per_unit=100.0,
     )
-    item2 = transaction_service.add_item(
+    transaction_service.add_item(
         db=db_session,
         transaction_id=tx.id,
         tenant_id=tenant.id,
         product_name="Bananas",
         quantity=2,
-        unit_price=150.0
+        unit_price=150.0,
     )
-
-    # --- Create real ConversationState ---
-    state = ConversationState(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant.id,
-        seller_phone="0789000003",
-        state=WorkflowState.WAITING_PRODUCT.value,
-        current_transaction_id=tx.id
-    )
-    db_session.add(state)
-    db_session.commit()
-    db_session.refresh(state)
 
     # --- Call finalize_transaction ---
-    summary_text = transaction_service.finalize_transaction(
+    result = transaction_service.finalize_transaction(
         db=db_session,
         transaction_id=tx.id,
-        state=state
+        tenant_id=tenant.id,
     )
 
-    # --- Check that summary contains all items and correct totals ---
-    assert "Apples x3 @ 200.00 → 600.00 RWF" in summary_text
-    assert "Bananas x2 @ 150.00 → 300.00 RWF" in summary_text
-    assert "💰 Total: 900.00 RWF" in summary_text
-    assert "✅ Sale recorded" in summary_text
+    # --- Check structured response ---
+    assert result.transaction_id == tx.id
+    assert result.total_amount == Decimal("900.00")  # 3*200 + 2*150
+    assert result.total_profit == Decimal("300.00")  # 3*(200-100), Bananas skipped
+    assert result.profit_complete is False  # Bananas has no cost
+    assert result.items_missing_cost_count == 1
+    assert len(result.items) == 2
 
-    # --- After finalize, state should be reset in DB ---
-    db_session.refresh(state)
-    assert state.current_transaction_id is None
-    assert state.state == WorkflowState.IDLE.value
+    product_names = [i.product_name for i in result.items]
+    assert "Apples" in product_names
+    assert "Bananas" in product_names

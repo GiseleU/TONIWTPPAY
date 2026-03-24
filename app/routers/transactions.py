@@ -11,9 +11,8 @@ from app.schemas.transaction import (
     FinalizeTransactionResponse
 )
 
-from app.services.transaction_service import create_transaction, add_item
+from app.services.transaction_service import create_transaction, add_item, finalize_transaction
 from app.services.state_service import get_or_create_state, reset_state
-from app.services.whatsapp_service import finalize_transaction as finalize_tx
 from app.core.enums import WorkflowState
 from app.db.session import get_db
 
@@ -87,8 +86,6 @@ def finalize_transaction_endpoint(request: FinalizeTransactionRequest, db: Sessi
     if not state.current_transaction_id:
         raise HTTPException(status_code=400, detail="No active transaction")
 
-    # Use shared WhatsApp service function for consistent summary
-    summary_text = finalize_tx(db, state)
-
-    db.commit()
-    return FinalizeTransactionResponse(summary=summary_text)
+    result = finalize_transaction(db, state.current_transaction_id, request.tenant_id)
+    reset_state(state, db)
+    return result

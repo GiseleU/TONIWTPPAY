@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from datetime import date
 from decimal import Decimal
 
-from app.db.models_import import Transaction, TransactionItem, DailySummary
+from app.db.models_import import Transaction, DailySummary
 from app.core.datetime_utils import get_start_of_day, get_end_of_day
 
 # -----------------------------
@@ -38,6 +38,7 @@ def get_today_summary(db: Session, tenant_id: str, target_date: date):
 
     product_totals = {}
     total_revenue = Decimal("0")
+    total_profit: Decimal | None = None
 
     for txn in transactions:
         for item in txn.items:
@@ -49,14 +50,21 @@ def get_today_summary(db: Session, tenant_id: str, target_date: date):
                     "product_name": item.product_name,
                     "quantity": 0,
                     "total_amount": Decimal("0"),
+                    "total_profit": None,
                 }
 
             product_totals[item.product_name]["quantity"] += item.quantity
             product_totals[item.product_name]["total_amount"] += item_total
 
+            if item.profit is not None:
+                p = product_totals[item.product_name]
+                p["total_profit"] = (p["total_profit"] or Decimal("0")) + item.profit
+                total_profit = (total_profit or Decimal("0")) + item.profit
+
     return {
         "total_orders": len(transactions),
         "total_revenue": total_revenue,
+        "total_profit": total_profit,
         "items": list(product_totals.values()),
     }
 

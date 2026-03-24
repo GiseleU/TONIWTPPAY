@@ -57,8 +57,8 @@ def test_add_item_to_transaction(client, db_session, tenant):
     assert data["item_id"] is not None
     assert data["product_name"] == "TestProduct"
     assert data["quantity"] == 2
-    assert data["unit_price"] == 50.0
-    assert data["total_amount"] == 100.0  # 2 * 50
+    assert float(data["unit_price"]) == 50.0
+    assert float(data["total_amount"]) == 100.0  # 2 * 50
 
     # Verify item exists in DB
     item = db_session.get(TransactionItem, data["item_id"])
@@ -73,23 +73,16 @@ def test_add_item_to_transaction(client, db_session, tenant):
 # Test finalize transaction
 # -----------------------------
 def test_finalize_transaction(client, db_session, tenant):
-    tx = Transaction(
-        tenant_id=tenant.id,
-        seller_phone="0789000000"
-    )
-    db_session.add(tx)
-    db_session.commit()
-
-    item = TransactionItem(
+    from app.services.transaction_service import create_transaction, add_item as svc_add_item
+    tx = create_transaction(db_session, seller_phone="0789000000", tenant_id=tenant.id)
+    svc_add_item(
+        db_session,
         transaction_id=tx.id,
         tenant_id=tenant.id,
         product_name="FinalProduct",
         quantity=1,
         unit_price=50.0,
-        total_amount=50.0
     )
-    db_session.add(item)
-    db_session.commit()
 
     state = ConversationState(
         seller_phone="0789000000",
@@ -109,9 +102,12 @@ def test_finalize_transaction(client, db_session, tenant):
 
     assert response.status_code == 200
     data = response.json()
-    assert "summary" in data
-    assert "FinalProduct" in data["summary"]
-    assert "Total: 50.0" in data["summary"]
+    assert data["transaction_id"] == tx.id
+    assert float(data["total_amount"]) == 50.0
+    assert data["profit_complete"] is False  # no cost_per_unit provided
+    items = data["items"]
+    assert len(items) == 1
+    assert items[0]["product_name"] == "FinalProduct"
 
     # Verify state is reset
     db_session.refresh(state)
@@ -149,9 +145,11 @@ def test_full_transaction_flow(client, db_session, tenant):
     }
     response_finalize = client.post("/transactions/finalize", json=payload_finalize)
     assert response_finalize.status_code == 200
-    summary = response_finalize.json()["summary"]
-    assert "Item1" in summary
-    assert "Total: 300.0" in summary  # 3 * 100
+    data = response_finalize.json()
+    assert data["transaction_id"] == transaction_id
+    assert float(data["total_amount"]) == 300.0  # 3 * 100
+    items = data["items"]
+    assert any(i["product_name"] == "Item1" for i in items)
 
     # Verify state reset in DB
     state = db_session.query(ConversationState).filter_by(

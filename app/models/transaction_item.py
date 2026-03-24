@@ -16,7 +16,9 @@ class TransactionItem(Base):
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)
-    total_amount = Column(Numeric(12, 2), nullable=False)  # total for this item (quantity * unit price)
+    cost_per_unit = Column(Numeric(12, 2), nullable=True)  # optional → enables profit tracking
+    profit = Column(Numeric(12, 2), nullable=True)          # computed in service if cost_per_unit exists
+    total_amount = Column(Numeric(12, 2), nullable=False)   # total for this item (quantity * unit price)
 
     # ---- Relationships ----
     transaction = relationship("Transaction", back_populates="items")

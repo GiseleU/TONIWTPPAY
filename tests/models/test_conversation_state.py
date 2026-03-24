@@ -35,7 +35,7 @@ def test_create_conversation_state(db_session: Session, tenant, transaction):
         seller_phone="250700000001",
         state="idle",
         current_transaction_id=transaction.id,
-        temp_product="Milk",
+        temp_product_name="Milk",
         temp_quantity="5"
     )
     db_session.add(cs)
@@ -44,7 +44,7 @@ def test_create_conversation_state(db_session: Session, tenant, transaction):
 
     assert cs.id == cs_id
     assert cs.state == "idle"
-    assert cs.temp_product == "Milk"
+    assert cs.temp_product_name == "Milk"
     assert cs.temp_quantity == "5"
     assert cs.tenant.id == tenant.id
     assert cs.transaction.id == transaction.id
@@ -63,5 +63,5 @@ def test_default_state(db_session: Session, tenant):
 
     assert cs.state == "idle"
     assert cs.current_transaction_id is None
-    assert cs.temp_product is None
+    assert cs.temp_product_name is None
     assert cs.temp_quantity is None

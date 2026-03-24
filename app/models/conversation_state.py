@@ -33,14 +33,15 @@ class ConversationState(Base):
         nullable=True
     )
 
-    # Temporary inputs during flow
-    temp_product = Column(String, nullable=True)
-    temp_quantity = Column(String, nullable=True)
-    temp_price = Column(String, nullable=True)
+    # Temp fields for WAITING_COST flow
+    # Populated in WAITING_PRODUCT_LINE, consumed and cleared in WAITING_COST
+    temp_product_name = Column(String, nullable=True)   # renamed from temp_product
+    temp_quantity = Column(String, nullable=True)        # unchanged
+    temp_unit_price = Column(String, nullable=True)      # renamed from temp_price
 
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships (light use only)
+    # Relationships
     transaction = relationship(Transaction, foreign_keys=[current_transaction_id])
     tenant = relationship("Tenant")

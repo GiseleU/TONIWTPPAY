@@ -1,4 +1,4 @@
-# tests/schemas/test_conversation_state.py
+# tests/schemas/test_conversation_state_schema.py
 
 import pytest
 from app.schemas.conversation_state import (
@@ -9,27 +9,25 @@ from app.schemas.conversation_state import (
 
 
 def test_conversation_state_create_valid():
-    """Test valid creation schema."""
-
     data = {
         "tenant_id": "T001",
         "seller_phone": "250700000001",
         "state": "AWAITING_PRODUCT",
         "current_transaction_id": "TX001",
-        "temp_product": "Rice",
+        "temp_product_name": "Rice",
         "temp_quantity": "2",
+        "temp_unit_price": "1000",
     }
 
     schema = ConversationStateCreate(**data)
 
     assert schema.tenant_id == "T001"
     assert schema.state == "AWAITING_PRODUCT"
-    assert schema.temp_product == "Rice"
+    assert schema.temp_product_name == "Rice"
+    assert schema.temp_unit_price == "1000"
 
 
 def test_conversation_state_create_required_fields():
-    """Missing required fields should raise validation error."""
-
     data = {
         "tenant_id": "T001",
         # missing seller_phone and state
@@ -40,8 +38,6 @@ def test_conversation_state_create_required_fields():
 
 
 def test_conversation_state_optional_fields():
-    """Optional fields should default to None."""
-
     data = {
         "tenant_id": "T001",
         "seller_phone": "250700000002",
@@ -51,13 +47,12 @@ def test_conversation_state_optional_fields():
     schema = ConversationStateCreate(**data)
 
     assert schema.current_transaction_id is None
-    assert schema.temp_product is None
+    assert schema.temp_product_name is None
     assert schema.temp_quantity is None
+    assert schema.temp_unit_price is None
 
 
 def test_conversation_state_update_partial():
-    """Update schema should allow partial updates."""
-
     data = {
         "state": "AWAITING_QUANTITY"
     }
@@ -69,17 +64,14 @@ def test_conversation_state_update_partial():
 
 
 def test_conversation_state_update_empty():
-    """Empty update should still be valid."""
-
     schema = ConversationStateUpdate()
 
     assert schema.state is None
-    assert schema.temp_product is None
+    assert schema.temp_product_name is None
+    assert schema.temp_unit_price is None
 
 
 def test_conversation_state_read_from_orm():
-    """Test ORM compatibility (orm_mode)."""
-
     class FakeORMObject:
         def __init__(self):
             self.id = "CS001"
@@ -87,8 +79,9 @@ def test_conversation_state_read_from_orm():
             self.seller_phone = "250700000003"
             self.state = "AWAITING_PRODUCT"
             self.current_transaction_id = None
-            self.temp_product = None
+            self.temp_product_name = None
             self.temp_quantity = None
+            self.temp_unit_price = None
 
     orm_obj = FakeORMObject()
 
@@ -97,3 +90,4 @@ def test_conversation_state_read_from_orm():
     assert schema.id == "CS001"
     assert schema.tenant_id == "T001"
     assert schema.state == "AWAITING_PRODUCT"
+    assert schema.temp_product_name is None

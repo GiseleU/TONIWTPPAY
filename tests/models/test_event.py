@@ -18,7 +18,6 @@ def test_create_event(db_session):
         tenant_id=tenant.id,
         event_type=EventType.ORDER_CREATED,
         actor=ActorType.SYSTEM,
-        visible_to_customer=True,
         payload={"note": "Test event"},
     )
     db_session.add(event)
@@ -28,5 +27,4 @@ def test_create_event(db_session):
     # Assertions
     assert event.id == event_id
     assert event.tenant.id == tenant.id
-    assert event.visible_to_customer is True
     assert event.payload["note"] == "Test event"

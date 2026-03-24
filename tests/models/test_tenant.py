@@ -70,6 +70,5 @@ def test_tenant_relationships_empty(db_session):
 
     assert tenant.transactions == []
     assert tenant.transaction_items == []
-    assert tenant.payments == []
     assert tenant.daily_summaries == []
     assert tenant.events == []

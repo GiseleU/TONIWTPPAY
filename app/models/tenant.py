@@ -27,12 +27,14 @@ class Tenant(Base):
     transaction_items = relationship(
         "TransactionItem", back_populates="tenant", cascade="all, delete-orphan"
     )
-    payments = relationship(
-        "Payment", back_populates="tenant", cascade="all, delete-orphan"
-    )
     daily_summaries = relationship(
         "DailySummary", back_populates="tenant", cascade="all, delete-orphan"
     )
     events = relationship(
         "Event", back_populates="tenant", cascade="all, delete-orphan"
+    )
+    conversation_states = relationship("ConversationState", back_populates="tenant", cascade="all, delete-orphan")
+
+    products = relationship(
+        "Product", back_populates="tenant", cascade="all, delete-orphan"
     )

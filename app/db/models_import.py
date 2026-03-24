@@ -5,5 +5,5 @@ from app.models.transaction import Transaction
 from app.models.conversation_state import ConversationState
 from app.models.daily_summary import DailySummary
 from app.models.event import Event
-from app.models.payment import Payment
 from app.models.transaction_item import TransactionItem
+from app.models.product import Product

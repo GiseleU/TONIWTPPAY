@@ -40,19 +40,20 @@ def test_get_or_create_state(existing_state):
         assert state.state == WorkflowState.IDLE.value
 
 def test_reset_state_without_db():
-    # Mock a state object
     mock_state = MagicMock(spec=ConversationState)
     mock_state.state = "something"
     mock_state.current_transaction_id = "TX123"
-    mock_state.temp_product = "item"
-    mock_state.temp_quantity = 2
+    mock_state.temp_product_name = "item"
+    mock_state.temp_quantity = "2"
+    mock_state.temp_unit_price = "1000"
 
     state_service.reset_state(mock_state)
 
     assert mock_state.state == WorkflowState.IDLE.value
     assert mock_state.current_transaction_id is None
-    assert mock_state.temp_product is None
+    assert mock_state.temp_product_name is None
     assert mock_state.temp_quantity is None
+    assert mock_state.temp_unit_price is None
 
 def test_reset_state_with_db():
     mock_state = MagicMock(spec=ConversationState)
@@ -60,12 +61,11 @@ def test_reset_state_with_db():
 
     state_service.reset_state(mock_state, db=mock_db)
 
-    # Fields reset
     assert mock_state.state == WorkflowState.IDLE.value
     assert mock_state.current_transaction_id is None
-    assert mock_state.temp_product is None
+    assert mock_state.temp_product_name is None
     assert mock_state.temp_quantity is None
+    assert mock_state.temp_unit_price is None
 
-    # DB commit & refresh called
     mock_db.commit.assert_called_once()
     mock_db.refresh.assert_called_once_with(mock_state)

@@ -48,6 +48,7 @@ class WorkflowState(str, Enum):
     WAITING_PRODUCT = "waiting_product"   # Waiting for product name input
     WAITING_QUANTITY = "waiting_quantity" # Waiting for quantity input
     WAITING_AMOUNT = "waiting_amount"     # Waiting for total amount input
+    WAITING_COST = "waiting_cost"         # new: after product line, before add_time
     WAITING_ADD_MORE = "waiting_add_more" # Waiting for YES/NO to add another product
     COMPLETED = "completed"               # Transaction completed, payment recorded
 

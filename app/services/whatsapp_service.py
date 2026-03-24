@@ -1,30 +1,26 @@
 # app/services/whatsapp_service.py
 
+import logging
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+
 from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from decimal import Decimal
 
-from app.models.tenant import Tenant
-from app.models.transaction_item import TransactionItem
+from app.core.datetime_utils import get_today
+from app.core.enums import CoexistenceStatus, WorkflowState
+from app.integrations.whatsapp_client import get_whatsapp_client
 from app.models.conversation_state import ConversationState
-
+from app.models.tenant import Tenant
+from app.services import transaction_service
 from app.services.state_service import get_or_create_state, reset_state
-from app.services.transaction_service import create_transaction, add_item
 from app.services.summary_service import get_today_summary
 
-import logging
-from sqlalchemy.exc import SQLAlchemyError
-
-from app.core.enums import WorkflowState, CoexistenceStatus
-from app.core.datetime_utils import get_today
-from app.integrations.whatsapp_client import get_whatsapp_client
+logger = logging.getLogger(__name__)
 
 
-async def handle_message(
-    db: Session,
-    seller_phone: str,
-    message: str,
-):
+async def handle_message(db: Session, seller_phone: str, message: str):
     """
     Handles incoming WhatsApp messages via Meta webhook.
     """
@@ -34,18 +30,17 @@ async def handle_message(
     # -----------------------
     tenant = db.query(Tenant).filter(
         Tenant.phone_number == seller_phone,
-        Tenant.coexistence_status == CoexistenceStatus.ACTIVE
+        Tenant.coexistence_status == CoexistenceStatus.ACTIVE,
     ).first()
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not active")
 
-    tenant_id = tenant.id
-
-    # Ignore empty messages
     if not message or not message.strip():
-        return 
-    
+        return
+
+    tenant_id = tenant.id
+    seller_name = tenant.name.split()[0]  # first name only
     msg = message.strip().lower()
     state: ConversationState = get_or_create_state(db, seller_phone, tenant_id)
     client = get_whatsapp_client()
@@ -54,187 +49,271 @@ async def handle_message(
     # 2. Commands
     # -----------------------
     if msg == "pay":
-        tx = create_transaction(db, seller_phone, tenant_id)
+        tx = transaction_service.create_transaction(db, seller_phone, tenant_id)
         state.state = WorkflowState.WAITING_PRODUCT_LINE.value
         state.current_transaction_id = tx.id
         db.commit()
 
         await client.send_message(
             seller_phone,
-            "Enter <product> <quantity> <unit price>\nEx: amagi 2 600"
+            "🛍️ New sale! What did you sell?\n\nEnter: <product> <quantity> <unit price>\nEx: amashu 3 3000"
         )
         return
 
     if msg == "summary":
-        summary = build_summary(db, tenant_id)
-        await client.send_message(seller_phone, summary)
+        summary_msg = build_summary(db, tenant_id, seller_name)
+        await client.send_message(seller_phone, summary_msg)
         return
 
     # -----------------------
     # 3. Workflow states
     # -----------------------
 
-    # ---- Product input ----
+    # ---- Product line input ----
     if state.state == WorkflowState.WAITING_PRODUCT_LINE.value:
         parts = message.strip().split()
 
         if len(parts) < 3:
             await client.send_message(
                 seller_phone,
-                "Invalid format.\nUse: <product> <quantity> <unit price>\nEx: amagi 2 600"
+                "Invalid format.\nUse: <product> <quantity> <unit price>\nEx: amashu 3 3000"
             )
             return
 
-        # Multi-word product support
         product_name = " ".join(parts[:-2])
         quantity_str = parts[-2]
         unit_price_str = parts[-1]
 
         try:
             quantity = int(quantity_str)
-            unit_price = Decimal(unit_price_str)
+            Decimal(unit_price_str)  # validate only
         except Exception:
             await client.send_message(
                 seller_phone,
-                "Quantity must be integer and price must be number.\nEx: amagi 2 600"
+                "Quantity must be a whole number and price must be a number.\nEx: amashu 3 3000"
             )
             return
 
-        try:
-            logger = logging.getLogger(__name__)
-            logger.info(
-                f"Adding item: tx={state.current_transaction_id}, "
-                f"{product_name} x{quantity}@{unit_price}"
-            )
+        # Save to temp fields, move to WAITING_COST
+        state.temp_product_name = product_name
+        state.temp_quantity = quantity_str
+        state.temp_unit_price = unit_price_str
+        state.state = WorkflowState.WAITING_COST.value
+        db.commit()
 
-            add_item(
+        await client.send_message(
+            seller_phone,
+            f"Nice! And what did each *{product_name}* cost you? (or type *skip*)"
+        )
+        return
+
+    # ---- Cost input ----
+    if state.state == WorkflowState.WAITING_COST.value:
+        product_name = state.temp_product_name
+        quantity = int(state.temp_quantity)
+        unit_price = Decimal(state.temp_unit_price)
+
+        cost_per_unit: Decimal | None = None
+        if msg not in ("skip", "s", "0"):
+            try:
+                cost_per_unit = Decimal(message.strip())
+            except Exception:
+                await client.send_message(
+                    seller_phone,
+                    "Enter a number for the cost, or type *skip*."
+                )
+                return
+
+        try:
+            item = transaction_service.add_item(
                 db,
                 transaction_id=state.current_transaction_id,
                 tenant_id=tenant_id,
                 product_name=product_name,
                 quantity=quantity,
-                unit_price=unit_price
+                unit_price=unit_price,
+                cost_per_unit=cost_per_unit,
+            )
+        except (ValueError, SQLAlchemyError) as e:
+            logger.error(f"Error adding item: {e}")
+            await client.send_message(seller_phone, "❌ Error recording item. Try PAY again.")
+            return
+
+        # Clear temp fields, advance state
+        state.temp_product_name = None
+        state.temp_quantity = None
+        state.temp_unit_price = None
+        state.state = WorkflowState.WAITING_ADD_MORE.value
+        db.commit()
+
+        # Per-item confirmation with profit if cost was provided
+        if item.profit is not None:
+            cost_total = (cost_per_unit * quantity).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            confirmation = (
+                f"✅ Sold *{product_name}* x{quantity} → {_fmt(item.total_amount)} RWF\n"
+                f"💸 Cost: {_fmt(cost_total)} RWF\n"
+                f"🟢 Profit: *{_fmt(item.profit)} RWF* on this sale 💪\n\n"
+                f"Add another product?"
+            )
+        else:
+            confirmation = (
+                f"✅ Added *{product_name}* x{quantity} → {_fmt(item.total_amount)} RWF\n\n"
+                f"Add another product?"
             )
 
-            state.state = WorkflowState.WAITING_ADD_MORE.value
-            db.commit()
+        await client.send_interactive_buttons(
+            seller_phone,
+            confirmation,
+            [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
+        )
+        return
 
+    # ---- Add more ----
+    if state.state == WorkflowState.WAITING_ADD_MORE.value:
+        if msg in ("yes", "y"):
+            state.state = WorkflowState.WAITING_PRODUCT_LINE.value
+            db.commit()
+            await client.send_message(
+                seller_phone,
+                "Enter: <product> <quantity> <unit price>\nEx: amashu 3 3000"
+            )
+            return
+
+        elif msg in ("no", "n"):
+            transaction_id = state.current_transaction_id
+            sale_msg = _build_sale_summary(db, transaction_id, tenant_id, seller_name)
+            reset_state(state, db)
+            await client.send_message(seller_phone, sale_msg)
+            return
+
+        else:
             await client.send_interactive_buttons(
                 seller_phone,
-                f"✅ Added {product_name} x{quantity} → {quantity * unit_price} RWF\n"
                 "Add another product?",
                 [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
             )
             return
 
-        except ValueError:
-            await client.send_message(
-                seller_phone,
-                "❌ Transaction error. Try PAY again."
-            )
-            return
-
-        except SQLAlchemyError:
-            await client.send_message(
-                seller_phone,
-                "❌ Database error. Try again."
-            )
-            return
-
-        except Exception:
-            await client.send_message(
-                seller_phone,
-                "❌ Unexpected error. Try PAY again."
-            )
-            return
-
-    # ---- Add more ----
-    if state.state == WorkflowState.WAITING_ADD_MORE.value:
-        if msg in ["yes", "y"]:
-            state.state = WorkflowState.WAITING_PRODUCT_LINE.value
-            db.commit()
-
-            await client.send_message(
-                seller_phone,
-                "Enter <product> <quantity> <unit price>\nEx: amagi 2 600"
-            )
-            return
-
-        elif msg in ["no", "n"]:
-            response = finalize_transaction(db, state)
-            reset_state(state,db)
-            await client.send_message(seller_phone, response)
-            return
-
-        else:
-            await client.send_message(
-                seller_phone,
-                "Reply 'yes' or 'no'."
-            )
-            return
-
-    # --------------------------------------
-    # 4. Default fallback for unknown commands
-    # ---------------------------------------
-    if state.state in [WorkflowState.IDLE.value]:
-        # Seller sent something other than PAY or SUMMARY
+    # -----------------------
+    # 4. Default fallback
+    # -----------------------
+    if state.state == WorkflowState.IDLE.value:
         await client.send_message(
             seller_phone,
-            "Send PAY to record a sale or SUMMARY to view today's sales."
+            "Send *PAY* to record a sale or *SUMMARY* to view today's sales."
         )
-        return 
+        return
 
 
-# -----------------------------
-# FINALIZE TRANSACTION
-# -----------------------------
-def finalize_transaction(db: Session, state: ConversationState) -> str:
-    items = db.query(TransactionItem).filter_by(
-        transaction_id=state.current_transaction_id
-    ).all()
+# ----------------------------------------
+# HELPERS
+# ----------------------------------------
 
-    if not items:
-        return "No items recorded."
+def _fmt(value: Decimal) -> str:
+    """Format a Decimal as a clean integer if whole, else 2 decimal places."""
+    if value == value.to_integral_value():
+        return f"{int(value):,}"
+    return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
-    total = sum((i.total_amount for i in items), Decimal("0"))
 
-    lines = ["✅ Sale recorded", "Items:"]
+def _build_sale_summary(
+    db: Session,
+    transaction_id: str,
+    tenant_id: str,
+    seller_name: str,
+) -> str:
+    """Build the gamified sale confirmation after finalization."""
+    result = transaction_service.finalize_transaction(db, transaction_id, tenant_id)
 
-    for i in items:
-        lines.append(
-            f"- {i.product_name} x{i.quantity} @ {i.unit_price} → {i.total_amount} RWF"
-        )
+    # Today's running totals (includes this transaction)
+    today = get_today_summary(db, tenant_id, get_today())
 
-    lines.append(f"\n💰 Total: {total} RWF")
+    lines = ["🎉 Sale locked in!\n"]
+    for item in result.items:
+        if item.profit is not None:
+            lines.append(
+                f"📦 {item.product_name} x{item.quantity} → {_fmt(item.total_amount)} RWF"
+                f" | Profit: {_fmt(item.profit)} RWF"
+            )
+        else:
+            lines.append(
+                f"📦 {item.product_name} x{item.quantity} → {_fmt(item.total_amount)} RWF"
+            )
 
-    # Reset AFTER building response
-    reset_state(state, db)
-    db.commit()
+    lines.append(f"\n💰 Total today so far: *{_fmt(today['total_revenue'])} RWF*")
+
+    if today.get("total_profit") is not None:
+        lines.append(f"🟢 Profit: *{_fmt(today['total_profit'])} RWF*")
+
+    lines.append(f"\nYou're doing great today, {seller_name}! 🔥")
 
     return "\n".join(lines)
 
 
-# -----------------------------
-# BUILD SUMMARY
-# -----------------------------
-def build_summary(db: Session, tenant_id: str) -> str:
+def build_summary(db: Session, tenant_id: str, seller_name: str) -> str:
+    """Build the gamified daily summary."""
     data = get_today_summary(db, tenant_id, get_today())
 
     if not data["total_orders"]:
-        return "No sales recorded today."
-
-    lines = [
-        "📊 Today's Sales Summary:",
-        "",
-        "Items:"
-    ]
-
-    for item in data["items"]:
-        lines.append(
-            f"- {item['product_name']} x{item['quantity']} → {item['total_amount']} RWF"
+        return (
+            f"No sales recorded today yet, {seller_name}. "
+            f"Send *PAY* to record your first sale! 💪"
         )
 
-    lines.append("")
-    lines.append(f"💰 Total Revenue: {data['total_revenue']} RWF")
+    day_name = datetime.now().strftime("%A")
+
+    lines = [f"🌟 *{seller_name}'s Report — {day_name}*\n"]
+    lines.append("📦 *What you sold:*")
+
+    best_product = None
+    best_revenue = Decimal("0")
+    thin_margin_products: list[tuple[str, int]] = []
+
+    for item in data["items"]:
+        product_name = item["product_name"]
+        qty = item["quantity"]
+        total = item["total_amount"]
+        profit = item.get("total_profit")
+
+        if total > best_revenue:
+            best_revenue = total
+            best_product = product_name
+
+        if profit is not None:
+            margin = (
+                (profit / total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                if total else Decimal("0")
+            )
+            lines.append(
+                f"• {product_name} x{qty} → {_fmt(total)} RWF | 🟢 Profit: {_fmt(profit)} RWF"
+            )
+            if margin < 20:
+                thin_margin_products.append((product_name, int(margin)))
+        else:
+            lines.append(f"• {product_name} x{qty} → {_fmt(total)} RWF")
+
+    lines.append(f"\n💰 Revenue: *{_fmt(data['total_revenue'])} RWF*")
+
+    total_profit = data.get("total_profit")
+    if total_profit is not None and data["total_revenue"] > 0:
+        margin_pct = (total_profit / data["total_revenue"] * 100).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        )
+        lines.append(f"🟢 Profit: *{_fmt(total_profit)} RWF*")
+        lines.append(f"📈 Margin: *{margin_pct}%*")
+
+    if best_product:
+        lines.append(f"\n🏆 Best seller today: *{best_product}*")
+
+    if thin_margin_products:
+        name, margin = thin_margin_products[0]
+        lines.append(f"💡 {name} has a thin margin ({margin}%) — worth reviewing your price?")
+
+    sales_count = data["total_orders"]
+    lines.append(
+        f"\n{sales_count} sale{'s' if sales_count != 1 else ''} recorded today. Keep it up! 🚀"
+    )
 
     return "\n".join(lines)
