@@ -12,6 +12,8 @@ Phase 0 responsibilities:
 - Ensure app boots cleanly
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 import json
 
@@ -21,11 +23,21 @@ from app.routers import (
     transactions,
     summary
 )
+from app.services.eod_scheduler import start_scheduler, stop_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Gwiza WhatsApp Pay",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     # --------------------------

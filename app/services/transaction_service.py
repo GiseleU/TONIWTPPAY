@@ -1,6 +1,7 @@
 # app/services/transaction_service.py
 
 from typing import Optional
+from datetime import date
 from sqlalchemy.orm import Session
 from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
@@ -11,6 +12,7 @@ from app.schemas.transaction import (
 import uuid
 import logging
 from decimal import Decimal, ROUND_HALF_UP
+from app.core.datetime_utils import get_start_of_day, get_end_of_day
 
 logger = logging.getLogger(__name__)
 
@@ -184,3 +186,69 @@ def finalize_transaction(
             for i in items
         ],
     )
+
+
+def set_product_cost(
+    db: Session,
+    tenant_id: str,
+    product_name: str,
+    cost_per_unit: Decimal,
+    target_date: date,
+) -> Optional[dict]:
+    """
+    Retroactively set cost_per_unit for all items of a product sold today.
+    Recalculates profit on each item and updates parent transaction profit fields.
+    Returns None if no matching items found today.
+    """
+    start = get_start_of_day(target_date)
+    end = get_end_of_day(target_date)
+
+    items = (
+        db.query(TransactionItem)
+        .join(Transaction, TransactionItem.transaction_id == Transaction.id)
+        .filter(
+            TransactionItem.tenant_id == tenant_id,
+            TransactionItem.product_name.ilike(product_name),
+            Transaction.created_at >= start,
+            Transaction.created_at <= end,
+        )
+        .all()
+    )
+
+    if not items:
+        return None
+
+    product_profit = Decimal("0")
+    affected_tx_ids: set[str] = set()
+
+    for item in items:
+        item.cost_per_unit = cost_per_unit
+        item.profit = (
+            (item.unit_price - cost_per_unit) * item.quantity
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        product_profit += item.profit
+        affected_tx_ids.add(item.transaction_id)
+
+    db.flush()
+
+    # Refresh profit fields on each affected transaction
+    for tx_id in affected_tx_ids:
+        tx = db.query(Transaction).filter_by(id=tx_id, tenant_id=tenant_id).first()
+        if tx:
+            db.refresh(tx)
+            total_p, complete, missing_count = _calculate_profit_fields(tx.items)
+            tx.total_profit = total_p
+            tx.profit_complete = complete
+            tx.items_missing_cost_count = missing_count
+
+    db.commit()
+
+    logger.info(
+        f"set_product_cost: product={items[0].product_name} | "
+        f"cost={cost_per_unit} | items={len(items)} | profit={product_profit}"
+    )
+
+    return {
+        "product_name": items[0].product_name,  # preserve original casing
+        "product_profit": product_profit,
+    }

@@ -41,6 +41,7 @@ class ConversationState(Base):
 
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_message_at = Column(DateTime, nullable=True)  # Last time seller sent a message (for Meta 24h window)
 
     # Relationships
     transaction = relationship(Transaction, foreign_keys=[current_transaction_id])

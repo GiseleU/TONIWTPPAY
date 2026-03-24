@@ -19,12 +19,14 @@ def mock_db():
 # -------------------------
 # Helpers to create mock objects
 # -------------------------
-def create_mock_item(name, qty, amount):
+def create_mock_item(name, qty, amount, profit=None):
     """Creates a mocked TransactionItem with total_amount."""
     item = MagicMock(spec=TransactionItem)
     item.product_name = name
     item.quantity = qty
-    item.total_amount = Decimal(amount)
+    item.total_amount = Decimal(str(amount))
+    item.profit = Decimal(str(profit)) if profit is not None else None
+    item.cost_per_unit = None if profit is None else Decimal("1")
     return item
 
 def create_mock_transaction(tx_id, items):
@@ -47,6 +49,10 @@ def test_get_today_summary_no_transactions(mock_db):
     assert result["total_orders"] == 0
     assert result["total_revenue"] == Decimal("0")
     assert result["items"] == []
+    assert result["gross_profit"] is None
+    assert result["gross_loss"] is None
+    assert result["profit_complete"] is False
+    assert result["missing_cost_products"] == []
 
 
 # -------------------------
@@ -75,6 +81,10 @@ def test_get_today_summary_with_transactions(mock_db):
     assert prodA["total_amount"] == Decimal(150)
     assert prodB["quantity"] == 1
     assert prodB["total_amount"] == Decimal(50)
+    # No cost data → no profit fields
+    assert result["gross_profit"] is None
+    assert result["profit_complete"] is False
+    assert set(result["missing_cost_products"]) == {"ProdA", "ProdB"}
 
 
 # -------------------------

@@ -1,7 +1,7 @@
 # app/services/whatsapp_service.py
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
@@ -40,15 +40,82 @@ async def handle_message(db: Session, seller_phone: str, message: str):
         return
 
     tenant_id = tenant.id
-    seller_name = tenant.name.split()[0]  # first name only
     msg = message.strip().lower()
     state: ConversationState = get_or_create_state(db, seller_phone, tenant_id)
     client = get_whatsapp_client()
 
+    # Track last message time for Meta 24h messaging window
+    state.last_message_at = datetime.now(timezone.utc)
+    db.commit()
+
     # -----------------------
-    # 2. Commands
+    # 2. SET COST — works from any state
     # -----------------------
-    if msg == "pay":
+    upper = message.strip().upper()
+    if upper.startswith("SET ") and " COST " in upper:
+        cost_idx = upper.find(" COST ")
+        product_name = message.strip()[4:cost_idx].strip()
+        cost_str = message.strip()[cost_idx + 6:].strip()
+
+        if not product_name:
+            await client.send_message(
+                seller_phone,
+                "Format: SET product COST price\nEx: SET amagi COST 200"
+            )
+            return
+
+        try:
+            cost_per_unit = Decimal(cost_str)
+        except Exception:
+            await client.send_message(
+                seller_phone,
+                "Cost must be a number.\nEx: SET amagi COST 200"
+            )
+            return
+
+        result = transaction_service.set_product_cost(
+            db, tenant_id, product_name, cost_per_unit, get_today()
+        )
+
+        if result is None:
+            await client.send_message(
+                seller_phone,
+                f"❌ No sales of *{product_name}* found today."
+            )
+            return
+
+        profit = result["product_profit"]
+        profit_line = (
+            f"🟢 Profit ({result['product_name']}): {_fmt(profit)} RWF"
+            if profit >= 0
+            else f"🔴 Loss ({result['product_name']}): {_fmt(abs(profit))} RWF"
+        )
+        lines = [f"✅ Cost saved for {result['product_name']}", profit_line]
+
+        today = get_today_summary(db, tenant_id, get_today())
+        missing = today.get("missing_cost_products", [])
+
+        if missing:
+            lines.append(f"\n⚠️ {len(missing)} products still missing cost: {', '.join(missing)}")
+            lines.append(f"Add cost to fully track profit. Send:\nSET product COST cost_per_unit")
+            lines.append(f"Ex: SET {missing[0]} COST 200")
+        else:
+            lines.append("\n" + _format_summary_block(today, include_details_hint=False))
+
+        await client.send_message(seller_phone, "\n".join(lines))
+        return
+
+    # -----------------------
+    # 3. Global commands
+    # -----------------------
+    if msg == "sale":
+        if state.state not in (WorkflowState.IDLE.value, WorkflowState.COMPLETED.value):
+            await client.send_message(
+                seller_phone,
+                "⚠️ Sale recording in progress.\nSend next product or type DONE"
+            )
+            return
+
         tx = transaction_service.create_transaction(db, seller_phone, tenant_id)
         state.state = WorkflowState.WAITING_PRODUCT_LINE.value
         state.current_transaction_id = tx.id
@@ -56,27 +123,41 @@ async def handle_message(db: Session, seller_phone: str, message: str):
 
         await client.send_message(
             seller_phone,
-            "🛍️ New sale! What did you sell?\n\nEnter: <product> <quantity> <unit price>\nEx: amashu 3 3000"
+            "🛍️ New sale\n\nEnter: product quantity price\nEx: amagi 2 600"
         )
         return
 
     if msg == "summary":
-        summary_msg = build_summary(db, tenant_id, seller_name)
-        await client.send_message(seller_phone, summary_msg)
+        today = get_today_summary(db, tenant_id, get_today())
+        await client.send_message(seller_phone, build_summary(today))
+        return
+
+    if msg == "details":
+        today = get_today_summary(db, tenant_id, get_today())
+        await client.send_message(seller_phone, build_details(today))
         return
 
     # -----------------------
-    # 3. Workflow states
+    # 4. Workflow states
     # -----------------------
 
     # ---- Product line input ----
     if state.state == WorkflowState.WAITING_PRODUCT_LINE.value:
-        parts = message.strip().split()
+        if msg == "done":
+            if not state.current_transaction_id:
+                await client.send_message(seller_phone, "No active sale found. Send SALE to start.")
+                return
 
+            sale_msg = _build_sale_summary(db, state.current_transaction_id, tenant_id)
+            reset_state(state, db)
+            await client.send_message(seller_phone, sale_msg)
+            return
+
+        parts = message.strip().split()
         if len(parts) < 3:
             await client.send_message(
                 seller_phone,
-                "Invalid format.\nUse: <product> <quantity> <unit price>\nEx: amashu 3 3000"
+                "Invalid format.\nEnter: product quantity price\nEx: amagi 2 600"
             )
             return
 
@@ -90,11 +171,10 @@ async def handle_message(db: Session, seller_phone: str, message: str):
         except Exception:
             await client.send_message(
                 seller_phone,
-                "Quantity must be a whole number and price must be a number.\nEx: amashu 3 3000"
+                "Quantity must be a whole number and price must be a number.\nEx: amagi 2 600"
             )
             return
 
-        # Save to temp fields, move to WAITING_COST
         state.temp_product_name = product_name
         state.temp_quantity = quantity_str
         state.temp_unit_price = unit_price_str
@@ -103,7 +183,7 @@ async def handle_message(db: Session, seller_phone: str, message: str):
 
         await client.send_message(
             seller_phone,
-            f"Nice! And what did each *{product_name}* cost you? (or type *skip*)"
+            f"Cost per {product_name}? (type number or skip)"
         )
         return
 
@@ -125,7 +205,7 @@ async def handle_message(db: Session, seller_phone: str, message: str):
                 return
 
         try:
-            item = transaction_service.add_item(
+            transaction_service.add_item(
                 db,
                 transaction_id=state.current_transaction_id,
                 tenant_id=tenant_id,
@@ -136,73 +216,28 @@ async def handle_message(db: Session, seller_phone: str, message: str):
             )
         except (ValueError, SQLAlchemyError) as e:
             logger.error(f"Error adding item: {e}")
-            await client.send_message(seller_phone, "❌ Error recording item. Try PAY again.")
+            await client.send_message(seller_phone, "❌ Error recording item. Try SALE again.")
             return
 
-        # Clear temp fields, advance state
         state.temp_product_name = None
         state.temp_quantity = None
         state.temp_unit_price = None
-        state.state = WorkflowState.WAITING_ADD_MORE.value
+        state.state = WorkflowState.WAITING_PRODUCT_LINE.value
         db.commit()
 
-        # Per-item confirmation with profit if cost was provided
-        if item.profit is not None:
-            cost_total = (cost_per_unit * quantity).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            confirmation = (
-                f"✅ Sold *{product_name}* x{quantity} → {_fmt(item.total_amount)} RWF\n"
-                f"💸 Cost: {_fmt(cost_total)} RWF\n"
-                f"🟢 Profit: *{_fmt(item.profit)} RWF* on this sale 💪\n\n"
-                f"Add another product?"
-            )
-        else:
-            confirmation = (
-                f"✅ Added *{product_name}* x{quantity} → {_fmt(item.total_amount)} RWF\n\n"
-                f"Add another product?"
-            )
-
-        await client.send_interactive_buttons(
+        await client.send_message(
             seller_phone,
-            confirmation,
-            [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
+            f"✅ {product_name} x{quantity} recorded\nSend next product or type DONE"
         )
         return
 
-    # ---- Add more ----
-    if state.state == WorkflowState.WAITING_ADD_MORE.value:
-        if msg in ("yes", "y"):
-            state.state = WorkflowState.WAITING_PRODUCT_LINE.value
-            db.commit()
-            await client.send_message(
-                seller_phone,
-                "Enter: <product> <quantity> <unit price>\nEx: amashu 3 3000"
-            )
-            return
-
-        elif msg in ("no", "n"):
-            transaction_id = state.current_transaction_id
-            sale_msg = _build_sale_summary(db, transaction_id, tenant_id, seller_name)
-            reset_state(state, db)
-            await client.send_message(seller_phone, sale_msg)
-            return
-
-        else:
-            await client.send_interactive_buttons(
-                seller_phone,
-                "Add another product?",
-                [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}]
-            )
-            return
-
     # -----------------------
-    # 4. Default fallback
+    # 5. Default fallback
     # -----------------------
     if state.state == WorkflowState.IDLE.value:
         await client.send_message(
             seller_phone,
-            "Send *PAY* to record a sale or *SUMMARY* to view today's sales."
+            "Send SALE to record a sale, SUMMARY for today's totals, or DETAILS for per product breakdown."
         )
         return
 
@@ -218,134 +253,117 @@ def _fmt(value: Decimal) -> str:
     return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def _build_sale_summary(
-    db: Session,
-    transaction_id: str,
-    tenant_id: str,
-    seller_name: str,
-) -> str:
-    """Build the gamified sale confirmation after finalization."""
-    result = transaction_service.finalize_transaction(db, transaction_id, tenant_id)
+def _missing_cost_nudge(missing: list[str]) -> str:
+    names = ", ".join(missing)
+    return (
+        f"⚠️ {len(missing)} product{'s' if len(missing) != 1 else ''} missing cost: {names}\n"
+        f"Add cost to fully track profit. Send:\n"
+        f"SET product COST cost_per_unit\n"
+        f"Ex: SET {missing[0]} COST 200"
+    )
 
-    # Today's running totals (includes this transaction)
-    today = get_today_summary(db, tenant_id, get_today())
 
-    lines = ["🎉 Sale locked in!\n"]
-    for item in result.items:
-        if item.profit is not None:
-            lines.append(
-                f"📦 {item.product_name} x{item.quantity} → {_fmt(item.total_amount)} RWF"
-                f" | Profit: {_fmt(item.profit)} RWF"
-            )
-        else:
-            lines.append(
-                f"📦 {item.product_name} x{item.quantity} → {_fmt(item.total_amount)} RWF"
-            )
+def _format_summary_block(today: dict, include_details_hint: bool = True) -> str:
+    """
+    Core summary block shared between DONE confirmation and SUMMARY command.
+    """
+    if not today["total_orders"]:
+        return "No sales recorded today. Send SALE to start."
 
-    lines.append(f"\n💰 Total today so far: *{_fmt(today['total_revenue'])} RWF*")
+    lines = ["📊 Today so far:"]
+    lines.append(f"💰 Revenue: {_fmt(today['total_revenue'])} RWF")
 
-    today_profit = today.get("total_profit")
-    today_profit_complete = today.get("profit_complete", False)
+    gross_profit = today.get("gross_profit")
+    gross_loss = today.get("gross_loss")
+    profit_complete = today.get("profit_complete", False)
+    missing = today.get("missing_cost_products", [])
+    top_revenue = today.get("top_revenue")
+    top_profit = today.get("top_profit")
 
-    if today_profit is not None:
-        if today_profit_complete:
-            lines.append(f"🟢 Profit: *{_fmt(today_profit)} RWF*")
-        else:
-            tracked = [i["product_name"] for i in today["items"] if i.get("total_profit") is not None]
-            product_str = ", ".join(f"*{n}*" for n in tracked)
-            lines.append(f"🟢 Profit from {product_str}: *{_fmt(today_profit)} RWF*")
+    if gross_profit is not None:
+        lines.append(f"🟢 Profit: {_fmt(gross_profit)} RWF")
+    if gross_loss is not None:
+        lines.append(f"🔴 Loss: {_fmt(gross_loss)} RWF")
 
-    # Nudge for items in this transaction missing cost
-    missing_in_tx = [i.product_name for i in result.items if i.cost_per_unit is None]
-    if missing_in_tx and result.total_profit is not None:
-        names = ", ".join(f"*{n}*" for n in missing_in_tx)
-        lines.append(f"💡 Add cost for {names} next time to see your full profit")
-    elif result.total_profit is None:
-        lines.append("💡 Try adding costs next time to start tracking profit!")
+    if top_revenue:
+        lines.append(f"🏆 Top revenue: {top_revenue['product_name']} — {_fmt(top_revenue['total_amount'])} RWF")
 
-    lines.append(f"\nYou're doing great today, {seller_name}! 🔥")
+    if top_profit:
+        incomplete_flag = " ⚠️ incomplete" if not profit_complete else ""
+        lines.append(f"🏆 Top profit: {top_profit['product_name']} — {_fmt(top_profit['total_profit'])} RWF{incomplete_flag}")
+
+    if missing:
+        lines.append("\n" + _missing_cost_nudge(missing))
+
+    if include_details_hint:
+        lines.append("\nSend DETAILS for per product breakdown")
 
     return "\n".join(lines)
 
 
-def build_summary(db: Session, tenant_id: str, seller_name: str) -> str:
-    """Build the gamified daily summary."""
-    data = get_today_summary(db, tenant_id, get_today())
+def _build_sale_summary(db: Session, transaction_id: str, tenant_id: str) -> str:
+    """Build sale confirmation shown after DONE."""
+    transaction_service.finalize_transaction(db, transaction_id, tenant_id)
+    today = get_today_summary(db, tenant_id, get_today())
 
-    if not data["total_orders"]:
-        return (
-            f"No sales recorded today yet, {seller_name}. "
-            f"Send *PAY* to record your first sale! 💪"
-        )
+    missing = today.get("missing_cost_products", [])
+    profit_complete = today.get("profit_complete", False)
 
-    day_name = datetime.now().strftime("%A")
+    lines = ["✅ Sale saved"]
+    lines.append("📊 Today so far:")
+    lines.append(f"💰 Revenue: {_fmt(today['total_revenue'])} RWF")
 
-    lines = [f"🌟 *{seller_name}'s Report — {day_name}*\n"]
-    lines.append("📦 *What you sold:*")
+    gross_profit = today.get("gross_profit")
+    gross_loss = today.get("gross_loss")
 
-    best_product = None
-    best_revenue = Decimal("0")
-    thin_margin_products: list[tuple[str, int]] = []
+    if gross_profit is not None:
+        lines.append(f"🟢 Profit: {_fmt(gross_profit)} RWF")
+    if gross_loss is not None:
+        lines.append(f"🔴 Loss: {_fmt(gross_loss)} RWF")
 
-    for item in data["items"]:
-        product_name = item["product_name"]
+    # Show top products only when all costs are known
+    if profit_complete:
+        top_revenue = today.get("top_revenue")
+        top_profit = today.get("top_profit")
+        if top_revenue:
+            lines.append(f"🏆 Top revenue: {top_revenue['product_name']} — {_fmt(top_revenue['total_amount'])} RWF")
+        if top_profit:
+            lines.append(f"🏆 Top profit: {top_profit['product_name']} — {_fmt(top_profit['total_profit'])} RWF")
+
+    if missing:
+        lines.append("\n" + _missing_cost_nudge(missing))
+
+    return "\n".join(lines)
+
+
+def build_summary(today: dict) -> str:
+    """SUMMARY command — always shows top products, flags incomplete profit."""
+    if not today["total_orders"]:
+        return "No sales recorded today. Send SALE to start."
+    return _format_summary_block(today, include_details_hint=True)
+
+
+def build_details(today: dict) -> str:
+    """DETAILS command — per product breakdown."""
+    if not today["total_orders"]:
+        return "No sales recorded today."
+
+    lines = ["📊 Today — per product:"]
+    for item in today["items"]:
+        name = item["product_name"]
         qty = item["quantity"]
-        total = item["total_amount"]
+        revenue = item["total_amount"]
         profit = item.get("total_profit")
 
-        if total > best_revenue:
-            best_revenue = total
-            best_product = product_name
-
-        if profit is not None:
-            margin = (
-                (profit / total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-                if total else Decimal("0")
-            )
-            lines.append(
-                f"• {product_name} x{qty} → {_fmt(total)} RWF | 🟢 Profit: {_fmt(profit)} RWF"
-            )
-            if margin < 20:
-                thin_margin_products.append((product_name, int(margin)))
+        if profit is None:
+            lines.append(f"- {name} x{qty}: Revenue {_fmt(revenue)} RWF | ⚠️ No cost")
+        elif profit >= 0:
+            lines.append(f"- {name} x{qty}: Revenue {_fmt(revenue)} RWF | 🟢 Profit {_fmt(profit)} RWF")
         else:
-            lines.append(f"• {product_name} x{qty} → {_fmt(total)} RWF")
+            lines.append(f"- {name} x{qty}: Revenue {_fmt(revenue)} RWF | 🔴 Loss {_fmt(abs(profit))} RWF")
 
-    lines.append(f"\n💰 Revenue: *{_fmt(data['total_revenue'])} RWF*")
-
-    total_profit = data.get("total_profit")
-    profit_complete = data.get("profit_complete", False)
-    if total_profit is not None and data["total_revenue"] > 0:
-        if profit_complete:
-            margin_pct = (total_profit / data["total_revenue"] * 100).quantize(
-                Decimal("1"), rounding=ROUND_HALF_UP
-            )
-            lines.append(f"🟢 Profit: *{_fmt(total_profit)} RWF*")
-            lines.append(f"📈 Margin: *{margin_pct}%*")
-        else:
-            tracked = [item["product_name"] for item in data["items"] if item.get("total_profit") is not None]
-            product_str = ", ".join(f"*{n}*" for n in tracked)
-            lines.append(f"🟢 Profit from {product_str}: *{_fmt(total_profit)} RWF*")
-
-    if best_product:
-        lines.append(f"\n🏆 Best seller today: *{best_product}*")
-
-    if thin_margin_products:
-        name, margin = thin_margin_products[0]
-        lines.append(f"💡 {name} has a thin margin ({margin}%) — worth reviewing your price?")
-
-    # Nudge for products without cost data
-    no_cost_products = [item["product_name"] for item in data["items"] if item.get("total_profit") is None]
-    if no_cost_products and total_profit is not None:
-        # Some products have cost, some don't — partial profit shown
-        names = ", ".join(f"*{n}*" for n in no_cost_products[:2])
-        suffix = "..." if len(no_cost_products) > 2 else ""
-        lines.append(f"💡 Profit shown is partial — add cost for {names}{suffix} to see the full picture")
-    elif no_cost_products and total_profit is None:
-        lines.append("💡 Add costs when recording sales to start tracking your daily profit")
-
-    sales_count = data["total_orders"]
-    lines.append(
-        f"\n{sales_count} sale{'s' if sales_count != 1 else ''} recorded today. Keep it up! 🚀"
-    )
+    missing = today.get("missing_cost_products", [])
+    if missing:
+        lines.append("\n" + _missing_cost_nudge(missing))
 
     return "\n".join(lines)

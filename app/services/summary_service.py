@@ -33,12 +33,20 @@ def get_today_summary(db: Session, tenant_id: str, target_date: date):
         return {
             "total_orders": 0,
             "total_revenue": Decimal("0"),
+            "gross_profit": None,
+            "gross_loss": None,
+            "profit_complete": False,
+            "missing_cost_products": [],
+            "top_revenue": None,
+            "top_profit": None,
             "items": [],
         }
 
-    product_totals = {}
+    product_totals: dict = {}
     total_revenue = Decimal("0")
-    total_profit: Decimal | None = None
+    gross_profit = Decimal("0")
+    gross_loss = Decimal("0")
+    has_any_cost = False
     any_missing_cost = False
 
     for txn in transactions:
@@ -46,30 +54,49 @@ def get_today_summary(db: Session, tenant_id: str, target_date: date):
             item_total = item.total_amount or Decimal("0")
             total_revenue += item_total
 
-            if item.product_name not in product_totals:
-                product_totals[item.product_name] = {
-                    "product_name": item.product_name,
+            key = item.product_name
+            if key not in product_totals:
+                product_totals[key] = {
+                    "product_name": key,
                     "quantity": 0,
                     "total_amount": Decimal("0"),
                     "total_profit": None,
                 }
 
-            product_totals[item.product_name]["quantity"] += item.quantity
-            product_totals[item.product_name]["total_amount"] += item_total
+            product_totals[key]["quantity"] += item.quantity
+            product_totals[key]["total_amount"] += item_total
 
             if item.profit is not None:
-                p = product_totals[item.product_name]
+                p = product_totals[key]
                 p["total_profit"] = (p["total_profit"] or Decimal("0")) + item.profit
-                total_profit = (total_profit or Decimal("0")) + item.profit
+                if item.profit >= 0:
+                    gross_profit += item.profit
+                else:
+                    gross_loss += abs(item.profit)
+                has_any_cost = True
             else:
                 any_missing_cost = True
+
+    items_list = list(product_totals.values())
+    missing_cost_products = [p["product_name"] for p in items_list if p["total_profit"] is None]
+
+    # Top by revenue (always available)
+    top_revenue = max(items_list, key=lambda p: p["total_amount"], default=None)
+
+    # Top by profit (only from products that have cost data and positive profit)
+    profitable = [p for p in items_list if p.get("total_profit") is not None and p["total_profit"] > 0]
+    top_profit = max(profitable, key=lambda p: p["total_profit"], default=None)
 
     return {
         "total_orders": len(transactions),
         "total_revenue": total_revenue,
-        "total_profit": total_profit,
-        "profit_complete": total_profit is not None and not any_missing_cost,
-        "items": list(product_totals.values()),
+        "gross_profit": gross_profit if has_any_cost else None,
+        "gross_loss": gross_loss if gross_loss > 0 else None,
+        "profit_complete": has_any_cost and not any_missing_cost,
+        "missing_cost_products": missing_cost_products,
+        "top_revenue": top_revenue,
+        "top_profit": top_profit,
+        "items": items_list,
     }
 
 

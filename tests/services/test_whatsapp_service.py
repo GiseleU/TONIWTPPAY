@@ -6,12 +6,13 @@ from decimal import Decimal
 from fastapi import HTTPException
 
 from app.services import whatsapp_service
+from app.services.whatsapp_service import build_summary, build_details
 from app.core.enums import WorkflowState, CoexistenceStatus
 from app.models.tenant import Tenant
 
 
 # --------------------------
-# Helper to mock DB queries
+# Helpers
 # --------------------------
 def mock_db_queries(mock_db, tenant):
     mock_tenant_query = MagicMock()
@@ -32,11 +33,35 @@ def make_tenant(**kwargs):
     return Tenant(**defaults)
 
 
+def make_today(
+    orders=1,
+    revenue=Decimal("9000"),
+    gross_profit=None,
+    gross_loss=None,
+    profit_complete=False,
+    missing=None,
+    top_revenue=None,
+    top_profit=None,
+    items=None,
+):
+    return {
+        "total_orders": orders,
+        "total_revenue": revenue,
+        "gross_profit": gross_profit,
+        "gross_loss": gross_loss,
+        "profit_complete": profit_complete,
+        "missing_cost_products": missing or [],
+        "top_revenue": top_revenue,
+        "top_profit": top_profit,
+        "items": items or [],
+    }
+
+
 # --------------------------
-# TEST: PAY command
+# TEST: SALE command
 # --------------------------
 @pytest.mark.asyncio
-async def test_handle_message_pay_starts_transaction():
+async def test_handle_message_sale_starts_transaction():
     mock_db = MagicMock()
     seller_phone = "0789000000"
     tenant = make_tenant(phone_number=seller_phone)
@@ -50,281 +75,39 @@ async def test_handle_message_pay_starts_transaction():
          patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
          patch("app.services.transaction_service.create_transaction", return_value=mock_tx):
 
-        await whatsapp_service.handle_message(mock_db, seller_phone, "pay")
+        await whatsapp_service.handle_message(mock_db, seller_phone, "sale")
 
         assert mock_state.state == WorkflowState.WAITING_PRODUCT_LINE.value
         assert mock_state.current_transaction_id == mock_tx.id
-        mock_db.commit.assert_called()
         sent_text = async_client.send_message.call_args[0][1]
-        assert "🛍️" in sent_text
         assert "New sale" in sent_text
 
 
-# --------------------------
-# TEST: SUMMARY
-# --------------------------
 @pytest.mark.asyncio
-async def test_handle_message_summary_sends_summary():
+async def test_sale_during_active_sale_warns():
     mock_db = MagicMock()
     seller_phone = "0789000000"
     tenant = make_tenant(phone_number=seller_phone)
     mock_db_queries(mock_db, tenant)
 
-    mock_state = MagicMock(state=WorkflowState.IDLE.value)
-    async_client = AsyncMock()
-
-    mock_summary = {
-        "total_orders": 1,
-        "total_revenue": Decimal("1000"),
-        "total_profit": None,
-        "profit_complete": False,
-        "items": [
-            {"product_name": "Eggs", "quantity": 2, "total_amount": Decimal("1000"), "total_profit": None}
-        ]
-    }
-
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
-         patch("app.services.whatsapp_service.get_today_summary", return_value=mock_summary):
-
-        await whatsapp_service.handle_message(mock_db, seller_phone, "summary")
-
-        async_client.send_message.assert_awaited()
-        sent_phone, sent_text = async_client.send_message.call_args[0]
-        assert sent_phone == seller_phone
-        assert "Eggs" in sent_text
-        assert "Revenue" in sent_text
-        assert "1,000" in sent_text or "1000" in sent_text
-
-
-# --------------------------
-# TEST: WhatsAppAccount missing
-# --------------------------
-@pytest.mark.asyncio
-async def test_handle_message_no_whatsapp_account():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-
-    mock_query = MagicMock()
-    mock_filter = MagicMock()
-    mock_filter.first.return_value = None
-    mock_query.filter.return_value = mock_filter
-    mock_db.query.return_value = mock_query
-
-    with pytest.raises(HTTPException) as exc:
-        await whatsapp_service.handle_message(mock_db, seller_phone, "pay")
-
-    assert exc.value.status_code == 404
-
-
-# --------------------------
-# TEST: WAITING_PRODUCT_LINE saves temp fields, moves to WAITING_COST
-# --------------------------
-@pytest.mark.asyncio
-async def test_handle_message_workflow_product_line_moves_to_waiting_cost():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    mock_state = MagicMock(
-        state=WorkflowState.WAITING_PRODUCT_LINE.value,
-        current_transaction_id="TX001"
-    )
+    mock_state = MagicMock(state=WorkflowState.WAITING_PRODUCT_LINE.value)
     async_client = AsyncMock()
 
     with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
          patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
 
-        await whatsapp_service.handle_message(mock_db, seller_phone, "Eggs 32 1000")
+        await whatsapp_service.handle_message(mock_db, seller_phone, "sale")
 
-        assert mock_state.temp_product_name == "Eggs"
-        assert mock_state.temp_quantity == "32"
-        assert mock_state.temp_unit_price == "1000"
-        assert mock_state.state == WorkflowState.WAITING_COST.value
-        mock_db.commit.assert_called()
         sent_text = async_client.send_message.call_args[0][1]
-        assert "cost" in sent_text.lower()
-        assert "skip" in sent_text.lower()
+        assert "in progress" in sent_text
+        assert "DONE" in sent_text
 
 
 # --------------------------
-# TEST: WAITING_COST adds item and moves to WAITING_ADD_MORE
-# --------------------------
-@pytest.mark.asyncio
-async def test_handle_message_waiting_cost_adds_item():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    mock_item = MagicMock(
-        total_amount=Decimal("3000"),
-        profit=Decimal("3000"),
-    )
-    mock_state = MagicMock(
-        state=WorkflowState.WAITING_COST.value,
-        current_transaction_id="TX001",
-        temp_product_name="amashu",
-        temp_quantity="3",
-        temp_unit_price="1000",
-    )
-    async_client = AsyncMock()
-
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
-         patch("app.services.transaction_service.add_item", return_value=mock_item) as mock_add:
-
-        await whatsapp_service.handle_message(mock_db, seller_phone, "500")
-
-        mock_add.assert_called_once()
-        called_kwargs = mock_add.call_args.kwargs
-        assert called_kwargs["product_name"] == "amashu"
-        assert called_kwargs["quantity"] == 3
-        assert called_kwargs["cost_per_unit"] == Decimal("500")
-        assert mock_state.state == WorkflowState.WAITING_ADD_MORE.value
-        assert mock_state.temp_product_name is None
-        async_client.send_interactive_buttons.assert_awaited()
-        sent_text = async_client.send_interactive_buttons.call_args[0][1]
-        assert "Profit" in sent_text
-
-
-@pytest.mark.asyncio
-async def test_handle_message_waiting_cost_skip():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    mock_item = MagicMock(
-        total_amount=Decimal("3000"),
-        profit=None,
-    )
-    mock_state = MagicMock(
-        state=WorkflowState.WAITING_COST.value,
-        current_transaction_id="TX001",
-        temp_product_name="amashu",
-        temp_quantity="3",
-        temp_unit_price="1000",
-    )
-    async_client = AsyncMock()
-
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
-         patch("app.services.transaction_service.add_item", return_value=mock_item) as mock_add:
-
-        await whatsapp_service.handle_message(mock_db, seller_phone, "skip")
-
-        mock_add.assert_called_once()
-        called_kwargs = mock_add.call_args.kwargs
-        assert called_kwargs["cost_per_unit"] is None
-        assert mock_state.state == WorkflowState.WAITING_ADD_MORE.value
-        async_client.send_interactive_buttons.assert_awaited()
-        sent_text = async_client.send_interactive_buttons.call_args[0][1]
-        assert "Profit" not in sent_text
-
-
-# --------------------------
-# TEST: build_summary
-# --------------------------
-def test_build_summary_returns_text():
-    mock_db = MagicMock()
-    tenant_id = "T001"
-    from app.services.whatsapp_service import build_summary
-
-    mock_summary = {
-        "total_orders": 2,
-        "total_revenue": Decimal("150"),
-        "total_profit": None,
-        "items": [
-            {"product_name": "Prod1", "quantity": 2, "total_amount": Decimal("100"), "total_profit": None},
-            {"product_name": "Prod2", "quantity": 1, "total_amount": Decimal("50"), "total_profit": None},
-        ]
-    }
-
-    with patch("app.services.whatsapp_service.get_today_summary", return_value=mock_summary):
-        result = build_summary(mock_db, tenant_id, "Gisèle")
-
-        assert "Gisèle" in result
-        assert "Prod1" in result
-        assert "Prod2" in result
-        assert "Revenue" in result
-
-
-def test_build_summary_no_sales():
-    mock_db = MagicMock()
-    from app.services.whatsapp_service import build_summary
-
-    mock_summary = {"total_orders": 0, "total_revenue": Decimal("0"), "total_profit": None, "items": []}
-
-    with patch("app.services.whatsapp_service.get_today_summary", return_value=mock_summary):
-        result = build_summary(mock_db, "T001", "Gisèle")
-
-        assert "Gisèle" in result
-        assert "PAY" in result
-
-
-def test_build_summary_with_profit():
-    mock_db = MagicMock()
-    from app.services.whatsapp_service import build_summary
-
-    mock_summary = {
-        "total_orders": 1,
-        "total_revenue": Decimal("9000"),
-        "total_profit": Decimal("3000"),
-        "profit_complete": True,
-        "items": [
-            {"product_name": "amashu", "quantity": 3, "total_amount": Decimal("9000"), "total_profit": Decimal("3000")}
-        ]
-    }
-
-    with patch("app.services.whatsapp_service.get_today_summary", return_value=mock_summary):
-        result = build_summary(mock_db, "T001", "Gisèle")
-
-        assert "Profit" in result
-        assert "Margin" in result
-        assert "amashu" in result
-
-
-# --------------------------
-# TEST: finalize resets state
+# TEST: WAITING_PRODUCT_LINE
 # --------------------------
 @pytest.mark.asyncio
-async def test_handle_message_finalize_calls_service_and_resets_state():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    async_client = AsyncMock()
-    mock_state = MagicMock(
-        state=WorkflowState.WAITING_ADD_MORE.value,
-        current_transaction_id="TX001"
-    )
-
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
-         patch("app.services.whatsapp_service._build_sale_summary", return_value="CONFIRMATION") as mock_build, \
-         patch("app.services.whatsapp_service.reset_state") as mock_reset:
-
-        def fake_reset(state, _db):
-            state.state = WorkflowState.IDLE.value
-            state.current_transaction_id = None
-        mock_reset.side_effect = fake_reset
-
-        await whatsapp_service.handle_message(mock_db, seller_phone, "no")
-
-        mock_build.assert_called_once_with(mock_db, "TX001", "T001", "Gisèle")
-        mock_reset.assert_called_once()
-        assert mock_state.state == WorkflowState.IDLE.value
-        async_client.send_message.assert_awaited_with(seller_phone, "CONFIRMATION")
-
-
-# --------------------------
-# TEST: Invalid format product input
-# --------------------------
-@pytest.mark.asyncio
-async def test_handle_message_invalid_format_during_product_line():
+async def test_product_line_moves_to_waiting_cost():
     mock_db = MagicMock()
     seller_phone = "0789000000"
     tenant = make_tenant(phone_number=seller_phone)
@@ -335,96 +118,298 @@ async def test_handle_message_invalid_format_during_product_line():
 
     with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
          patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
-        await whatsapp_service.handle_message(mock_db, seller_phone, "invalid input")
-        async_client.send_message.assert_awaited()
-        assert "Invalid format" in async_client.send_message.call_args[0][1]
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "amagi 2 600")
+
+        assert mock_state.temp_product_name == "amagi"
+        assert mock_state.temp_quantity == "2"
+        assert mock_state.temp_unit_price == "600"
+        assert mock_state.state == WorkflowState.WAITING_COST.value
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "cost" in sent_text.lower()
 
 
-# --------------------------
-# TEST: Invalid response during add more uses buttons
-# --------------------------
 @pytest.mark.asyncio
-async def test_handle_message_invalid_response_during_add_more():
+async def test_done_finalizes_sale():
     mock_db = MagicMock()
     seller_phone = "0789000000"
     tenant = make_tenant(phone_number=seller_phone)
     mock_db_queries(mock_db, tenant)
 
-    mock_state = MagicMock(state=WorkflowState.WAITING_ADD_MORE.value, current_transaction_id="TX001")
+    mock_state = MagicMock(state=WorkflowState.WAITING_PRODUCT_LINE.value, current_transaction_id="TX001")
     async_client = AsyncMock()
 
     with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
-        await whatsapp_service.handle_message(mock_db, seller_phone, "maybe")
-        async_client.send_interactive_buttons.assert_awaited()
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.whatsapp_service._build_sale_summary", return_value="SALE DONE") as mock_build, \
+         patch("app.services.whatsapp_service.reset_state") as mock_reset:
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "done")
+
+        mock_build.assert_called_once_with(mock_db, "TX001", "T001")
+        mock_reset.assert_called_once()
+        async_client.send_message.assert_awaited_with(seller_phone, "SALE DONE")
+
+
+# --------------------------
+# TEST: WAITING_COST
+# --------------------------
+@pytest.mark.asyncio
+async def test_cost_entry_adds_item_and_returns_to_product_line():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(
+        state=WorkflowState.WAITING_COST.value,
+        current_transaction_id="TX001",
+        temp_product_name="amagi",
+        temp_quantity="2",
+        temp_unit_price="600",
+    )
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.transaction_service.add_item") as mock_add:
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "400")
+
+        mock_add.assert_called_once()
+        assert mock_add.call_args.kwargs["cost_per_unit"] == Decimal("400")
+        assert mock_state.state == WorkflowState.WAITING_PRODUCT_LINE.value
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "recorded" in sent_text
+        assert "DONE" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_cost_skip_adds_item_without_cost():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(
+        state=WorkflowState.WAITING_COST.value,
+        current_transaction_id="TX001",
+        temp_product_name="amagi",
+        temp_quantity="2",
+        temp_unit_price="600",
+    )
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.transaction_service.add_item") as mock_add:
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "skip")
+
+        assert mock_add.call_args.kwargs["cost_per_unit"] is None
+        assert mock_state.state == WorkflowState.WAITING_PRODUCT_LINE.value
+
+
+# --------------------------
+# TEST: SET COST
+# --------------------------
+@pytest.mark.asyncio
+async def test_set_cost_command():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    mock_result = {"product_name": "amagi", "product_profit": Decimal("2000")}
+    mock_today = make_today(missing=[])
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.transaction_service.set_product_cost", return_value=mock_result), \
+         patch("app.services.whatsapp_service.get_today_summary", return_value=mock_today):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "SET amagi COST 400")
+
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "Cost saved" in sent_text
+        assert "amagi" in sent_text
+        assert "2,000" in sent_text or "2000" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_set_cost_product_not_found():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.transaction_service.set_product_cost", return_value=None):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "SET unknownproduct COST 500")
+
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "No sales" in sent_text
+
+
+# --------------------------
+# TEST: SUMMARY
+# --------------------------
+@pytest.mark.asyncio
+async def test_summary_command():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    mock_today = make_today(
+        orders=2,
+        revenue=Decimal("15000"),
+        gross_profit=Decimal("5000"),
+        profit_complete=True,
+        top_revenue={"product_name": "Air Force", "total_amount": Decimal("10000")},
+        top_profit={"product_name": "Air Force", "total_profit": Decimal("5000")},
+    )
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.whatsapp_service.get_today_summary", return_value=mock_today):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "summary")
+
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "Revenue" in sent_text
+        assert "Profit" in sent_text
+        assert "Air Force" in sent_text
+        assert "DETAILS" in sent_text
+
+
+# --------------------------
+# TEST: DETAILS
+# --------------------------
+@pytest.mark.asyncio
+async def test_details_command():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    mock_today = make_today(
+        orders=1,
+        revenue=Decimal("9000"),
+        items=[{"product_name": "amagi", "quantity": 2, "total_amount": Decimal("9000"), "total_profit": Decimal("2000")}],
+    )
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.whatsapp_service.get_today_summary", return_value=mock_today):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "details")
+
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "per product" in sent_text
+        assert "amagi" in sent_text
+        assert "Profit" in sent_text
+
+
+# --------------------------
+# TEST: build_summary
+# --------------------------
+def test_build_summary_all_costs():
+    today = make_today(
+        orders=2,
+        revenue=Decimal("25000"),
+        gross_profit=Decimal("8500"),
+        profit_complete=True,
+        top_revenue={"product_name": "amashu", "total_amount": Decimal("21000")},
+        top_profit={"product_name": "amashu", "total_profit": Decimal("7000")},
+    )
+    result = build_summary(today)
+    assert "Revenue" in result
+    assert "25,000" in result or "25000" in result
+    assert "🟢 Profit" in result
+    assert "amashu" in result
+    assert "DETAILS" in result
+
+
+def test_build_summary_partial_costs():
+    today = make_today(
+        orders=2,
+        revenue=Decimal("25000"),
+        gross_profit=Decimal("7000"),
+        profit_complete=False,
+        missing=["Indimu", "Fanta"],
+        top_revenue={"product_name": "amashu", "total_amount": Decimal("21000")},
+        top_profit={"product_name": "amashu", "total_profit": Decimal("7000")},
+    )
+    result = build_summary(today)
+    assert "⚠️" in result
+    assert "incomplete" in result
+    assert "Indimu" in result
+    assert "SET" in result
+
+
+def test_build_summary_no_sales():
+    today = make_today(orders=0, revenue=Decimal("0"))
+    result = build_summary(today)
+    assert "No sales" in result
+
+
+# --------------------------
+# TEST: build_details
+# --------------------------
+def test_build_details_mixed():
+    today = make_today(
+        orders=2,
+        revenue=Decimal("25000"),
+        items=[
+            {"product_name": "amashu", "quantity": 3, "total_amount": Decimal("9000"), "total_profit": Decimal("3000")},
+            {"product_name": "Indimu", "quantity": 5, "total_amount": Decimal("4000"), "total_profit": None},
+            {"product_name": "loss item", "quantity": 1, "total_amount": Decimal("500"), "total_profit": Decimal("-200")},
+        ],
+        missing=["Indimu"],
+    )
+    result = build_details(today)
+    assert "🟢 Profit" in result
+    assert "⚠️ No cost" in result
+    assert "🔴 Loss" in result
+    assert "Indimu" in result
+
+
+# --------------------------
+# TEST: Tenant not found
+# --------------------------
+@pytest.mark.asyncio
+async def test_handle_message_no_tenant():
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.filter.return_value.first.return_value = None
+    mock_db.query.return_value = mock_query
+
+    with pytest.raises(HTTPException) as exc:
+        await whatsapp_service.handle_message(mock_db, "0789000000", "sale")
+
+    assert exc.value.status_code == 404
 
 
 # --------------------------
 # TEST: Empty message
 # --------------------------
 @pytest.mark.asyncio
-async def test_handle_message_empty_message_no_response():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    async_client = AsyncMock()
-
-    empty_state = MagicMock(state=WorkflowState.IDLE.value)
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=empty_state):
-        await whatsapp_service.handle_message(mock_db, seller_phone, "")
-        async_client.send_message.assert_not_awaited()
-
-
-# --------------------------
-# TEST: Non-IDLE random input triggers invalid format
-# --------------------------
-@pytest.mark.asyncio
-async def test_handle_message_non_idle_no_fallback():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    async_client = AsyncMock()
-    non_idle_state = MagicMock(state=WorkflowState.WAITING_PRODUCT_LINE.value)
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=non_idle_state):
-        await whatsapp_service.handle_message(mock_db, seller_phone, "hello")
-
-        async_client.send_message.assert_awaited()
-        assert "Invalid format" in async_client.send_message.call_args[0][1]
-
-
-# --------------------------
-# TEST: IDLE fallback
-# --------------------------
-@pytest.mark.asyncio
-async def test_handle_message_idle_fallback_sent():
-    mock_db = MagicMock()
-    seller_phone = "0789000000"
-    tenant = make_tenant(phone_number=seller_phone)
-    mock_db_queries(mock_db, tenant)
-
-    async_client = AsyncMock()
-    idle_state = MagicMock(state=WorkflowState.IDLE.value)
-    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=idle_state):
-        await whatsapp_service.handle_message(mock_db, seller_phone, "hello")
-
-        async_client.send_message.assert_awaited()
-        sent_text = async_client.send_message.call_args[0][1]
-        assert "PAY" in sent_text
-        assert "SUMMARY" in sent_text
-
-
-# --------------------------
-# TEST: full workflow multi-word product
-# --------------------------
-@pytest.mark.asyncio
-async def test_full_workflow_multi_word_product():
+async def test_empty_message_no_response():
     mock_db = MagicMock()
     seller_phone = "0789000000"
     tenant = make_tenant(phone_number=seller_phone)
@@ -433,36 +418,28 @@ async def test_full_workflow_multi_word_product():
     async_client = AsyncMock()
     mock_state = MagicMock(state=WorkflowState.IDLE.value)
 
-    mock_item = MagicMock(total_amount=Decimal("1000"), profit=None)
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "")
+        async_client.send_message.assert_not_awaited()
+
+
+# --------------------------
+# TEST: IDLE fallback
+# --------------------------
+@pytest.mark.asyncio
+async def test_idle_fallback():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db_queries(mock_db, tenant)
+
+    async_client = AsyncMock()
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
 
     with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
-         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
-         patch("app.services.transaction_service.create_transaction", return_value=MagicMock(id="TX001")), \
-         patch("app.services.transaction_service.add_item", return_value=mock_item) as mock_add_item, \
-         patch("app.services.whatsapp_service._build_sale_summary", return_value="CONFIRMATION"):
-
-        # Start transaction
-        await whatsapp_service.handle_message(mock_db, seller_phone, "pay")
-        assert mock_state.state == WorkflowState.WAITING_PRODUCT_LINE.value
-
-        # Enter product line — moves to WAITING_COST
-        mock_state.state = WorkflowState.WAITING_PRODUCT_LINE.value
-        mock_state.current_transaction_id = "TX001"
-        await whatsapp_service.handle_message(mock_db, seller_phone, "Large Eggs 5 200")
-        assert mock_state.state == WorkflowState.WAITING_COST.value
-        assert mock_state.temp_product_name == "Large Eggs"
-
-        # Enter cost — calls add_item, moves to WAITING_ADD_MORE
-        mock_state.state = WorkflowState.WAITING_COST.value
-        mock_state.temp_product_name = "Large Eggs"
-        mock_state.temp_quantity = "5"
-        mock_state.temp_unit_price = "200"
-        await whatsapp_service.handle_message(mock_db, seller_phone, "skip")
-        mock_add_item.assert_called_once()
-        assert mock_state.state == WorkflowState.WAITING_ADD_MORE.value
-
-        # Finish transaction
-        mock_state.state = WorkflowState.WAITING_ADD_MORE.value
-        mock_state.current_transaction_id = "TX001"
-        await whatsapp_service.handle_message(mock_db, seller_phone, "no")
-        async_client.send_message.assert_awaited_with(seller_phone, "CONFIRMATION")
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "hello")
+        sent_text = async_client.send_message.call_args[0][1]
+        assert "SALE" in sent_text
+        assert "SUMMARY" in sent_text
