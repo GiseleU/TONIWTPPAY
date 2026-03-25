@@ -325,8 +325,8 @@ async def handle_message(db: Session, seller_phone: str, message: str):
 
 def _welcome_message(name: str) -> str:
     return (
-        f"🎉 Welcome to Gwiza, {name}!\n\n"
-        "Here's how to track your sales:\n\n"
+        f"🎉 Welcome to TONIWTPPAY, {name}!\n\n"
+        "Here are the commands you will use to track your sales:\n\n"
         "🛍️ *SALE* — Start recording a new sale\n"
         "   Enter products one by one: product qty price\n"
         "   Ex: amagi 2 600\n"
