@@ -33,7 +33,7 @@ class CoexistenceStatus(str, Enum):
     """Represents seller coexistence onboarding states."""
     PENDING = "pending"      # Just onboarded, not verified yet
     ACTIVE = "active"        # Approved and allowed to send messages
-    BLOCKED = "blocked"      # Explicitly prohibited
+    BLOCKED = "blocked"      # Explicitly prohibited (by admin) or opted out (by seller via STOP)
     SUSPENDED = "suspended"  # Temporary restriction for policy violation
 
 
@@ -54,3 +54,6 @@ class WorkflowState(str, Enum):
 
     #------New single-line product input -----------
     WAITING_PRODUCT_LINE = "waiting_product_line" # Waiting for "<product> <quantity> <unit price>" input
+
+    #------Registration -----------
+    WAITING_NAME = "waiting_name" # New seller sent START, waiting for them to provide their name

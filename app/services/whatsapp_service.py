@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -25,31 +24,109 @@ async def handle_message(db: Session, seller_phone: str, message: str):
     Handles incoming WhatsApp messages via Meta webhook.
     """
 
-    # -----------------------
-    # 1. Resolve tenant
-    # -----------------------
-    tenant = db.query(Tenant).filter(
-        Tenant.phone_number == seller_phone,
-        Tenant.coexistence_status == CoexistenceStatus.ACTIVE,
-    ).first()
-
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not active")
-
     if not message or not message.strip():
         return
 
-    tenant_id = tenant.id
     msg = message.strip().lower()
-    state: ConversationState = get_or_create_state(db, seller_phone, tenant_id)
     client = get_whatsapp_client()
+
+    # -----------------------
+    # 1. Resolve tenant (any status — we handle each case explicitly)
+    # -----------------------
+    tenant = db.query(Tenant).filter(
+        Tenant.phone_number == seller_phone,
+    ).first()
+
+    # ---- Unknown seller (not in our system yet) ----
+    if not tenant:
+        if msg == "start":
+            new_tenant = Tenant(
+                name=f"__pending_{seller_phone}__",
+                phone_number=seller_phone,
+                coexistence_status=CoexistenceStatus.PENDING,
+            )
+            db.add(new_tenant)
+            db.flush()
+            db.add(ConversationState(
+                tenant_id=new_tenant.id,
+                seller_phone=seller_phone,
+                state=WorkflowState.WAITING_NAME.value,
+                last_message_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+            await client.send_message(seller_phone, "👋 Hi! What's your name?")
+        else:
+            await client.send_message(
+                seller_phone,
+                "Send *START* to register and begin tracking your sales."
+            )
+        return
+
+    # ---- Opted-out seller ----
+    if tenant.coexistence_status == CoexistenceStatus.BLOCKED:
+        if msg == "start":
+            # Re-registration: reset to PENDING + WAITING_NAME
+            tenant.coexistence_status = CoexistenceStatus.PENDING
+            tenant.name = f"__pending_{seller_phone}__"
+            state: ConversationState = get_or_create_state(db, seller_phone, tenant.id)
+            state.state = WorkflowState.WAITING_NAME.value
+            state.last_message_at = datetime.now(timezone.utc)
+            db.commit()
+            await client.send_message(seller_phone, "👋 Welcome back! What's your name?")
+        # Any other message from an opted-out seller: silently ignore
+        return
+
+    # ---- Pending seller (sent START, hasn't provided name yet) ----
+    if tenant.coexistence_status == CoexistenceStatus.PENDING:
+        state = get_or_create_state(db, seller_phone, tenant.id)
+        state.last_message_at = datetime.now(timezone.utc)
+        db.commit()
+
+        if state.state == WorkflowState.WAITING_NAME.value:
+            seller_name = message.strip()
+            if len(seller_name) < 2:
+                await client.send_message(seller_phone, "Please enter your name.")
+                return
+            tenant.name = seller_name
+            tenant.coexistence_status = CoexistenceStatus.ACTIVE
+            state.state = WorkflowState.IDLE.value
+            db.commit()
+            await client.send_message(seller_phone, _welcome_message(seller_name))
+        return
+
+    # ---- Suspended or any other non-active status: silently ignore ----
+    if tenant.coexistence_status != CoexistenceStatus.ACTIVE:
+        return
+
+    # -----------------------
+    # From here: ACTIVE seller
+    # -----------------------
+    tenant_id = tenant.id
+    state: ConversationState = get_or_create_state(db, seller_phone, tenant_id)
 
     # Track last message time for Meta 24h messaging window
     state.last_message_at = datetime.now(timezone.utc)
     db.commit()
 
     # -----------------------
-    # 2. SET COST — works from any state
+    # 2. STOP — opt out from any state
+    # -----------------------
+    if msg == "stop":
+        tenant.coexistence_status = CoexistenceStatus.BLOCKED
+        reset_state(state, db)
+        await client.send_message(
+            seller_phone,
+            "You've been unregistered from Gwiza. Send *START* if you ever want to come back."
+        )
+        return
+
+    # Already-registered seller sending START again
+    if msg == "start":
+        await client.send_message(seller_phone, _already_registered_message())
+        return
+
+    # -----------------------
+    # 3. SET COST — works from any state
     # -----------------------
     upper = message.strip().upper()
     if upper.startswith("SET ") and " COST " in upper:
@@ -245,6 +322,33 @@ async def handle_message(db: Session, seller_phone: str, message: str):
 # ----------------------------------------
 # HELPERS
 # ----------------------------------------
+
+def _welcome_message(name: str) -> str:
+    return (
+        f"🎉 Welcome to Gwiza, {name}!\n\n"
+        "Here's how to track your sales:\n\n"
+        "🛍️ *SALE* — Start recording a new sale\n"
+        "   Enter products one by one: product qty price\n"
+        "   Ex: amagi 2 600\n"
+        "   Type *DONE* when finished\n\n"
+        "📊 *SUMMARY* — Today's revenue & profit totals\n\n"
+        "📋 *DETAILS* — Per-product breakdown for today\n\n"
+        "💰 *SET [product] COST [price]* — Add cost for a product\n"
+        "   Ex: SET amagi COST 200\n\n"
+        "Send *SALE* to record your first sale! 🚀"
+    )
+
+
+def _already_registered_message() -> str:
+    return (
+        "✅ You're already registered!\n\n"
+        "Commands:\n"
+        "🛍️ *SALE* — Record a sale\n"
+        "📊 *SUMMARY* — Today's totals\n"
+        "📋 *DETAILS* — Per-product breakdown\n"
+        "💰 *SET [product] COST [price]* — Add product cost"
+    )
+
 
 def _fmt(value: Decimal) -> str:
     """Format a Decimal as a clean integer if whole, else 2 decimal places."""

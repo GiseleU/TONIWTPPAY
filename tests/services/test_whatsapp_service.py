@@ -3,7 +3,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from decimal import Decimal
-from fastapi import HTTPException
 
 from app.services import whatsapp_service
 from app.services.whatsapp_service import build_summary, build_details
@@ -390,19 +389,153 @@ def test_build_details_mixed():
 
 
 # --------------------------
-# TEST: Tenant not found
+# TEST: Registration flow
 # --------------------------
 @pytest.mark.asyncio
-async def test_handle_message_no_tenant():
+async def test_unknown_sender_non_start_prompted_to_register():
     mock_db = MagicMock()
-    mock_query = MagicMock()
-    mock_query.filter.return_value.first.return_value = None
-    mock_db.query.return_value = mock_query
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+    async_client = AsyncMock()
 
-    with pytest.raises(HTTPException) as exc:
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client):
         await whatsapp_service.handle_message(mock_db, "0789000000", "sale")
 
-    assert exc.value.status_code == 404
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "START" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_unknown_sender_start_asks_for_name():
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client):
+        await whatsapp_service.handle_message(mock_db, "0789000000", "START")
+
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "name" in sent_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_pending_seller_name_activates_account():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone, coexistence_status=CoexistenceStatus.PENDING)
+    mock_db.query.return_value.filter.return_value.first.return_value = tenant
+
+    mock_state = MagicMock(state=WorkflowState.WAITING_NAME.value)
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "Jean")
+
+    assert tenant.name == "Jean"
+    assert tenant.coexistence_status == CoexistenceStatus.ACTIVE
+    assert mock_state.state == WorkflowState.IDLE.value
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "Welcome" in sent_text
+    assert "Jean" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_pending_seller_short_name_rejected():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone, coexistence_status=CoexistenceStatus.PENDING)
+    mock_db.query.return_value.filter.return_value.first.return_value = tenant
+
+    mock_state = MagicMock(state=WorkflowState.WAITING_NAME.value)
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "A")
+
+    assert tenant.coexistence_status == CoexistenceStatus.PENDING
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "name" in sent_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_active_seller_stop_blocks_account():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db.query.return_value.filter.return_value.first.return_value = tenant
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state), \
+         patch("app.services.whatsapp_service.reset_state"):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "stop")
+
+    assert tenant.coexistence_status == CoexistenceStatus.BLOCKED
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "unregistered" in sent_text.lower()
+    assert "START" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_blocked_seller_start_restarts_registration():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone, coexistence_status=CoexistenceStatus.BLOCKED)
+    mock_db.query.return_value.filter.return_value.first.return_value = tenant
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "START")
+
+    assert tenant.coexistence_status == CoexistenceStatus.PENDING
+    assert mock_state.state == WorkflowState.WAITING_NAME.value
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "name" in sent_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_blocked_seller_non_start_silently_ignored():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone, coexistence_status=CoexistenceStatus.BLOCKED)
+    mock_db.query.return_value.filter.return_value.first.return_value = tenant
+
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client):
+        await whatsapp_service.handle_message(mock_db, seller_phone, "sale")
+
+    async_client.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_active_seller_start_shows_commands():
+    mock_db = MagicMock()
+    seller_phone = "0789000000"
+    tenant = make_tenant(phone_number=seller_phone)
+    mock_db.query.return_value.filter.return_value.first.return_value = tenant
+
+    mock_state = MagicMock(state=WorkflowState.IDLE.value)
+    async_client = AsyncMock()
+
+    with patch("app.services.whatsapp_service.get_whatsapp_client", return_value=async_client), \
+         patch("app.services.whatsapp_service.get_or_create_state", return_value=mock_state):
+
+        await whatsapp_service.handle_message(mock_db, seller_phone, "START")
+
+    sent_text = async_client.send_message.call_args[0][1]
+    assert "already registered" in sent_text.lower()
+    assert "SALE" in sent_text
 
 
 # --------------------------

@@ -33,18 +33,14 @@ def test_tenant_defaults(db_session):
     assert tenant.created_at is not None
 
 
-def test_tenant_unique_name_constraint(db_session):
-    """Test that tenant name must be unique."""
-    tenant1 = Tenant(id="T002", name="UniqueTenant")
-    tenant2 = Tenant(id="T003", name="UniqueTenant")  # same name
+def test_tenant_duplicate_names_allowed(db_session):
+    """Two sellers can share a name — phone_number is the unique identifier."""
+    tenant1 = Tenant(id=str(uuid.uuid4()), name="Jean")
+    tenant2 = Tenant(id=str(uuid.uuid4()), name="Jean")
 
     db_session.add(tenant1)
-    db_session.commit()
-
     db_session.add(tenant2)
-
-    with pytest.raises(Exception):
-        db_session.commit()
+    db_session.commit()  # must not raise
 
 
 def test_tenant_with_phone_number(db_session):

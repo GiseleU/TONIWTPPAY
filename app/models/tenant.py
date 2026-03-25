@@ -10,7 +10,7 @@ class Tenant(Base):
     __tablename__ = "tenants"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    name = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
     phone_number = Column(String, nullable=True)  # Seller's personal WhatsApp for notifications
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     coexistence_status = Column(
